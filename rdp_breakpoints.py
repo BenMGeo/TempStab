@@ -9,6 +9,7 @@ Created on Thu Jun 29 18:01:15 2017
 from TempStab import rdp
 from scipy import interpolate
 import numpy as np
+from itertools import compress
 
 
 def __calc_zero_lin__(xarr, yarr):
@@ -66,7 +67,9 @@ def rdp_bp_iter(x, y, nIter=100, tol=0):
             diff_list=(np.diff(means) < tol).tolist()
             diff_list.insert(0, False)
             diff_list.insert(-1, False)
-            print(diff_list)
+            keep_list = [not i for i in diff_list]
+            xsubset = list(compress(xsubset, keep_list))
+            print(xsubset)
 
 
         nIter -= 1

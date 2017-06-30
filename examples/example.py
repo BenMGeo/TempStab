@@ -37,7 +37,7 @@ TS = TempStab(dates=the_dates, array=the_ts,
 
 BP = rdp_bp(TS.numdate, TS.array)
 
-rdp_bp_iter(TS.numdate, TS.array)
+rdp_bp_iter(TS.numdate, TS.array, tol=1)
 
 #plt.figure()
 #plt.plot(abs(spline_red_array_d2) == min(abs(spline_red_array_d2)))
