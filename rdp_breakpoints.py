@@ -49,11 +49,61 @@ def rdp_bp(x, y):
     return r
 
 
-def rdp_bp_iter(x, y, nIter=100):
+def __subset_mean__(start_stop, x, y):
+    take = np.logical_and(x >= min(start_stop), x <= max(start_stop))
+    return np.mean(y[take])
 
-    xsubset = [min(x), max(x)]
 
-    while nIter>100:
+def rdp_bp_iter(x, y, nIter=100, tol=0):
 
+    xsubset = [min(x), np.mean(x), max(x)]
+
+    while nIter>0:
+
+        if len(xsubset)>2:
+
+            means = [__subset_mean__([xsubset[t],xsubset[t+1]], x, y) for t in range(len(xsubset)-1)]
+            diff_list=(np.diff(means) < tol).tolist()
+            diff_list.insert(0, False)
+            diff_list.insert(-1, False)
+            print(diff_list)
+
+
+        nIter -= 1
 
     pass
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
