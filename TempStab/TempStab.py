@@ -7,6 +7,7 @@ Created on Wed Jun 28 16:19:40 2017
 """
 import datetime
 import numpy as np
+from models import LinearTrend, SineSeason1
 
 
 class TempStab(object):
@@ -30,9 +31,9 @@ class TempStab(object):
         self.__default_season__ = kwargs.get('default_season',
                                              [1., 0., 0., 0., 0., 0.])
         self.__homogenize__ = kwargs.get('homogenize', None)
-        self.__preprocess__ = kwargs.get('preprocess', True)
-        self.__run__ = kwargs.get('run', False)
         self.__timescale__ = kwargs.get('timescale', 'months')
+
+        self.__run__ = kwargs.get('run', False)
 
         # Set methods, conversion and integritiy checks
         self.__set_break_model__()
@@ -42,10 +43,10 @@ class TempStab(object):
         self.__check__()
 
         # Run routine
-        if self.__preprocess__:
-            self.__preprocessing__(**kwargs)
+        self.__preprocessing__(**kwargs)
+
         if self.__run__:
-            self.__analysis__(homogenize=self.__homogenize__, **kwargs)
+            self.analysis(homogenize=self.__homogenize__, **kwargs)
 
     def __check__(self):
         """
@@ -76,8 +77,7 @@ class TempStab(object):
             time = this_datetime.hour * 1. + \
                 (this_datetime.minute * 1. +
                  (this_datetime.second * 1. +
-                  this_datetime.microsecond/1000000.
-                 )/60.)/60.
+                  this_datetime.microsecond/1000000.)/60.)/60.
 
             days = this_datetime.toordinal() + time/24.
 
@@ -93,6 +93,7 @@ class TempStab(object):
         """
         determine periodic frequency of data sampling from data
         """
+        # TODO: what is this supposed to do?
         return 42.
 
     def __scale_time__(self):
@@ -107,7 +108,58 @@ class TempStab(object):
         pass
 
     def __preprocessing__(self, **kwargs):
+        """
+        perform preprocessing of the actual data
+        The following options are available
+
+        detrend : bool
+            perform a linear detrending of the original data
+        remove_season : bool
+            remove the seasonality according to the model chosen
+            if this option is used, then the overall linear trend
+            is removed first and then the seasonality is removed thereafter
+        """
+        detrend = kwargs.get('detrend', False)
+        deseason = kwargs.get('deseason', False)
+
+        self.prep = self.__orig__.copy()
+
+        # in case that season shall be removed do detrending first
+        if deseason:
+            detrend = True
+
+        #  remove linear trend res = x - (slope*t + offset)
+        if detrend:
+            self.__detrend__()
+
+        # remove seasonality
+        if deseason:
+            self.__deseason__()
+        else:
+            self.__season_removed__ = np.zeros_like(self.numdate)
         pass
 
-    def __analysis__(self, homogenize=None, **kwargs):
-        pass
+    def __deseason__(self):
+        print('Deseasonalization of the data ...')
+        sins = SineSeason1(self.numdate, self.prep, f=self.frequency)
+        sins.fit()  # estimate seasonal model parameters
+        self.__season_removed__ = sins.eval_func(self.numdate)
+        self.prep = self.prep - self.__season_removed__
+        print('Deseasonalization finished.')
+
+    def __detrend__(self):
+        """
+        substracting linear trend
+        """
+        print('Detrending of the data ...')
+        lint = LinearTrend(self.numdate, self.prep)
+        lint.fit()
+        self.prep -= self.numdate * lint.param[0] + lint.param[1]
+        print('Detrending finished.')
+
+    def analysis(self, homogenize=None, **kwargs):
+        """
+        perform analysis of the actual data
+        """
+        res = {}
+        return res
