@@ -62,6 +62,7 @@ class SineSeason1(SineSeason):
         super(SineSeason1, self).__init__(t, x, **kwargs)
 
     def func(self, t, a1, p0_1):
+        self.t = t
         return self._sine(a1, p0_1, 1.)
 
     def eval_func(self, t):
@@ -79,6 +80,7 @@ class SineSeason3(SineSeason):
 
     def func(self, t, a1, a2, a3, p0_1, p0_2, p0_3):
         # Eq 4 in [1]
+        self.t = t
         return self._sine(a1, p0_1, 1.) + \
             self._sine(a2, p0_2, 2.) + \
             self._sine(a3, p0_3, 3.)

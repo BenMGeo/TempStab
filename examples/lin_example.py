@@ -15,19 +15,26 @@ from TempStab import rdp
 from TempStab import rdp_bp, rdp_bp_iter
 from scipy import interpolate
 
-seqs = np.random.randint(50,150,4)
-seqs = seqs.tolist()
-seqs.append(500-sum(seqs))
-if min(seqs)<0:
-    seqs =  [i - min(seqs) for i in seqs]
+xs = np.linspace(1,500,500)
+m = 0.02
+t = 3
+lin = m*xs+t
 
-bias = np.random.randint(-10,10,5) * 1.
-bias[3] = np.NAN
-#bias[1] = np.NAN
+yearly = 4.8 * np.sin(np.pi*2*((xs+25)/364))
+monthly = 3.1 * np.cos(np.pi*2*((xs+1)/7))
+daily = 1.1 * np.sin(np.pi*2*((xs+8)/1))
 
-array = [bias[i] + np.random.rand(seqs[i]) for i in range(len(seqs))]
+noise = (np.random.rand(len(xs)) - 0.5) * 3
 
-the_ts = np.concatenate(array)
+the_ts = lin + yearly + monthly + daily + noise
+
+start = np.random.randint(100, 399)
+
+stop = start + np.random.randint(10, 80)
+
+gap = np.arange(start, stop)
+
+the_ts[gap] = np.nan
 
 tdt = datetime.datetime.today()
 the_dates = [tdt - datetime.timedelta(days=x, minutes=7.3345*x) for
