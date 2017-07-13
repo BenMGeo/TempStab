@@ -9,8 +9,9 @@ import datetime
 import math
 from itertools import compress
 import numpy as np
+from scipy import signal
 from models import LinearTrend, SineSeason1, SineSeason3
-# import matplotlib.pyplot as plt
+import matplotlib.pyplot as plt
 
 
 class TempStab(object):
@@ -44,7 +45,7 @@ class TempStab(object):
         # numeric tolerance for shift
         self.num_tol = 10**-8
         self.frequency = 365.2425
-        self.period = 1
+        self.periods = np.array([1])
 
         # Initialize methods
         self.break_method = kwargs.get('breakpoint_method', None)
@@ -135,7 +136,23 @@ class TempStab(object):
         determine periodic frequency of data sampling from data
         """
         # TODO: what is this supposed to do?
-        self.period = 24
+
+        def autocorrelation(x):
+            """
+            Compute the autocorrelation of the signal,
+            based on the properties of the
+            power spectral density of the signal.
+            """
+            xp = x-np.mean(x)
+            f = np.fft.fft(xp)
+            p = np.array([np.real(v)**2+np.imag(v)**2 for v in f])
+            pi = np.fft.ifft(p)
+            return np.real(pi)[:x.size/2]/np.sum(xp**2)
+
+        # calculate
+
+
+        self.periods = 24
 
     def __scale_time__(self):
         """
@@ -176,8 +193,6 @@ class TempStab(object):
         # remove seasonality
         if deseason:
             self.__deseason__()
-        else:
-            self.__season_removed__ = np.zeros_like(self.numdate)
 
     def __deseason__(self):
         print('Deseasonalization of the data ...')
@@ -269,45 +284,64 @@ class TempStab(object):
             keep = [not math.isnan(pp) for pp in self.prep]
             loc_prep = np.array(list(compress(self.prep, keep)))
             loc_numdate = np.array(list(compress(self.numdate, keep)))
-            self.filler = self.numdate[self.__identified_gaps__] * 0. -999.
+            self.filler = self.numdate * 0. - 999.
 
             if self.__season_removed__ is not None:
-                self.__linear_p_noise__()
+                self.__linear__()
             elif self.__trend_removed__ is not None:
-                self.__linear_p_noise__()
+                self.__linear__()
                 self.__gap_season__(loc_numdate, loc_prep)
             else:
-                self.__linear_p_noise__()
+                self.__linear__()
                 self.__gap_season__(loc_numdate, loc_prep)
                 self.__gap_trend__(loc_numdate, loc_prep)
 
-            self.prep[self.__identified_gaps__] = self.filler
+            self.prep[self.__identified_gaps__] = \
+                self.filler[self.__identified_gaps__]
         else:
             pass
 
-    def __linear_p_noise__(self):
+    def __linear__(self):
         """
-        produces linear filler with noise
+        produces linear filler without noise
         """
-
-        pass
+        self.filler = self.filler * 0. + np.mean(self.prep[np.logical_not(
+            self.__identified_gaps__)])
 
     def __gap_season__(self, t, x):
         """
         produces linear filler with season (no noise)
         """
-        pass
-#        season = self.season_mod(t=t,
-#                                 x=x,
-#                                 f=self.frequency)
-#        season.fit()
-#        self.filler += season.eval_func(self.numdate[self.__identified_gaps__])
+        season = self.season_mod(t=t,
+                                 x=x,
+                                 f=self.frequency)
+        season.fit()
+        self.filler = season.eval_func(self.numdate)
 
     def __gap_trend__(self, t, x):
         """
         produces linear filler with trend (no noise)
         """
-        pass
+        # calculate gaps environments (starts and stops)
+        enlarged_gaps = signal.convolve(self.__identified_gaps__,
+                                        np.array([1, 1, 1]))[1:-1] != 0
+        startsNstops = np.logical_xor(enlarged_gaps, self.__identified_gaps__)
+        sNs_pos = self.numdate[startsNstops]
+
+        # full linear model
+        # (get that from detrend? externalize a single function?)
+        lint = LinearTrend(t, x)
+        lint.fit()
+
+        for i in range(len(sNs_pos)/2):
+            if sNs_pos[(i*2)] <= sNs_pos[(i*2+1)]:
+                this_gap = np.logical_and(self.numdate > sNs_pos[(i*2)],
+                                          self.numdate < sNs_pos[(i*2+1)])
+            else:
+                this_gap = np.logical_and(self.numdate > sNs_pos[(i*2+1)],
+                                          self.numdate < sNs_pos[(i*2)])
+            self.filler[this_gap] = \
+                lint.eval_func(self.numdate[this_gap])
 
     def __identify_gaps__(self):
         """
