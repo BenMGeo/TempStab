@@ -21,9 +21,9 @@ m = 0.02
 t = 3
 lin = m*xs+t
 
-yearly = 4.8 * np.sin(np.pi*2*((xs+25)/364))
-monthly = 3.1 * np.cos(np.pi*2*((xs+1)/30))
-daily = 1.1 * np.sin(np.pi*2*((xs+8)/1))
+yearly = 4.8 * np.sin(np.pi*2*((xs+25)/131))
+monthly = 3.1 * np.cos(np.pi*2*((xs+1)/47))
+daily =1.1 * np.sin(np.pi*2*((xs+8)/83))
 
 noise = (np.random.rand(len(xs)) - 0.5) * 3
 
@@ -52,13 +52,13 @@ plt.show()
 plt.plot(autocorr(the_ts), autocorrelation(the_ts))
 plt.show()
 
-start = np.random.randint(100, 399)
-
-stop = start + np.random.randint(10, 80)
-
-gap = np.arange(start, stop)
-
-the_ts[gap] = np.nan
+#start = np.random.randint(100, 399)
+#
+#stop = start + np.random.randint(10, 80)
+#
+#gap = np.arange(start, stop)
+#
+#the_ts[gap] = np.nan
 
 
 tdt = datetime.datetime.today()

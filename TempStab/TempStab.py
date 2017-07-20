@@ -10,7 +10,11 @@ import math
 from itertools import compress
 import numpy as np
 from scipy import signal
-from models import LinearTrend, SineSeason1, SineSeason3
+import scipy.fftpack as fftpack
+import scipy.optimize as optimize
+from scipy.ndimage.filters import uniform_filter1d
+from sklearn.neighbors import KernelDensity
+from models import LinearTrend, SineSeasonk, SineSeason1, SineSeason3
 import matplotlib.pyplot as plt
 
 
@@ -26,9 +30,9 @@ class TempStab(object):
         array: numpy nd.array
         """
 
-        self.dates = dates
-        self.array = array
-        self.prep = None
+        self.dates = dates[:]
+        self.array = array.copy()
+        self.prep = array.copy()
         self.season = []
         self.season_mod = self.__do_nothing__
         self.numdate = np.linspace(1, 100, num=len(dates))
@@ -53,6 +57,7 @@ class TempStab(object):
                                              [1., 0., 0., 0., 0., 0.])
         self.__homogenize__ = kwargs.get('homogenize', None)
         self.__timescale__ = kwargs.get('timescale', 'months')
+        self.__num_periods__ = kwargs.get('num_periods', 3)
 
         self.__run__ = kwargs.get('run', False)
 
@@ -133,26 +138,86 @@ class TempStab(object):
 
     def __set_period__(self):
         """
-        determine periodic frequency of data sampling from data
+        determine periodic frequencies of data sampling from data
         """
         # TODO: what is this supposed to do?
+        print('Calculating the periodicities of the data ...')
+        self.__detrend__()
+        periods = []
 
-        def autocorrelation(x):
-            """
-            Compute the autocorrelation of the signal,
-            based on the properties of the
-            power spectral density of the signal.
-            """
-            xp = x-np.mean(x)
-            f = np.fft.fft(xp)
-            p = np.array([np.real(v)**2+np.imag(v)**2 for v in f])
-            pi = np.fft.ifft(p)
-            return np.real(pi)[:x.size/2]/np.sum(xp**2)
+        def mysine(x, a1, a2, a3):
+            return a1 * np.sin(a2 * x + a3)
 
-        # calculate
+        # presmoothing needed
+        plt.plot(self.prep)
+        # TODO filter size is a hard question
+        self.prep = uniform_filter1d(self.prep, size=20)
+        plt.plot(self.prep)
+        plt.show()
 
+        # usually, within the range of 25-30 repetitions,
+        # the following tries result in an error
+        for i in range(100):
 
-        self.periods = 24
+            try:
+                prephat = fftpack.rfft(self.prep)
+                idx = (prephat**2).argmax()
+                freqs = fftpack.rfftfreq(prephat.size,
+                                         d=np.abs(self.numdate[1] -
+                                                  self.numdate[0])/(2*np.pi))
+                frequency = freqs[idx]
+
+                amplitude = self.prep.max()
+                guess = [amplitude, frequency, 0.]
+
+                (amplitude, frequency, phase), pcov = optimize.curve_fit(
+                    mysine, self.numdate, self.prep, guess)
+
+                period = 2*np.pi/frequency
+
+                xx = self.numdate
+                yy = mysine(xx, amplitude, frequency, phase)
+
+                self.prep -= yy
+
+                periods.append(period)
+
+            except:
+                print(str(i) + " out of 100 frequencies calculated!")
+                break
+
+        # reoccurences much longer than the time series don't make sense
+        keep = np.abs(periods) < 1.1*len(self.prep)
+        periods = list(compress(periods, keep))
+
+        # the histogram of the data
+        n, bins, patches = plt.hist(periods, 10, normed=1,
+                                    facecolor='green', alpha=0.75)
+
+        plt.xlabel('Periods')
+        plt.ylabel('Probability')
+#        plt.axis([0, 450, 0, 0.03])
+        plt.grid(True)
+
+#        plt.show()
+
+        kde = KernelDensity(kernel='gaussian', bandwidth=10).\
+            fit(np.array(periods).reshape(-1, 1))
+        temp_res = np.linspace(0.9*min(periods),
+                               1.1*max(periods),
+                               len(self.prep)*1.5)
+        kde_hist = np.exp(kde.score_samples(temp_res.reshape(-1, 1)))
+
+        plt.plot(temp_res, kde_hist)
+
+        peaks = signal.argrelextrema(kde_hist, np.greater)
+
+        plt.plot(temp_res[peaks], kde_hist[peaks], '+')
+
+        print(temp_res[peaks])
+
+        self.periods = 24.
+        print('Calculating the periodicities finished.')
 
     def __scale_time__(self):
         """
@@ -380,6 +445,7 @@ class TempStab(object):
         """
         new_array = self.prep * np.NAN
         keep = (self.numdate - self.__numdate_orig__) < self.num_tol
+        # TODO use np.isclose
         new_array[keep] = self.prep[keep]
         self.prep = new_array
 

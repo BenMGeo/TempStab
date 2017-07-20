@@ -3,7 +3,7 @@
 # take into account the uncertainties when doing the fitting
 
 
-from scipy.optimize import curve_fit
+from scipy.optimize import curve_fit, leastsq
 import numpy as np
 
 
@@ -32,6 +32,7 @@ class Models(object):
 class LinearTrend(Models):
     def __init__(self, t, x, e=None):
         super(LinearTrend, self).__init__(t, x, e=e)
+        self.numParam = 2
 
     def func(self, t, slope, intercept):
         # print 't: ', t
@@ -60,6 +61,7 @@ class SineSeason(Models):
 class SineSeason1(SineSeason):
     def __init__(self, t, x, **kwargs):
         super(SineSeason1, self).__init__(t, x, **kwargs)
+        self.numParam = 2
 
     def func(self, t, a1, p0_1):
         self.t = t
@@ -67,6 +69,19 @@ class SineSeason1(SineSeason):
 
     def eval_func(self, t):
         return self.func(t, self.param[0], self.param[1])
+
+
+class SineSeasonk(SineSeason):
+    def __init__(self, t, x, **kwargs):
+        super(SineSeasonk, self).__init__(t, x, **kwargs)
+        self.numParam = 3
+
+    def func(self, t, a1, p0_1, k):
+        self.t = t
+        return self._sine(a1, p0_1, k)
+
+    def eval_func(self, t):
+        return self.func(t, self.param[0], self.param[1], self.param[2])
 
 
 class SineSeason3(SineSeason):
@@ -77,6 +92,7 @@ class SineSeason3(SineSeason):
         [1] Verbesselt et al. (2010): doi: 10.1016/j.rse.2010.08.003
         """
         super(SineSeason3, self).__init__(t, x, **kwargs)
+        self.numParam = 6
 
     def func(self, t, a1, a2, a3, p0_1, p0_2, p0_3):
         # Eq 4 in [1]
