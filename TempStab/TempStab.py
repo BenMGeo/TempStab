@@ -10,12 +10,14 @@ import math
 from itertools import compress
 import numpy as np
 from scipy import signal
+from scipy.stats import iqr
 import scipy.fftpack as fftpack
 import scipy.optimize as optimize
 from scipy.ndimage.filters import uniform_filter1d
 from sklearn.neighbors import KernelDensity
 from models import LinearTrend, SineSeasonk, SineSeason1, SineSeason3
 import matplotlib.pyplot as plt
+import matplotlib.mlab as mlab
 
 
 class TempStab(object):
@@ -146,14 +148,24 @@ class TempStab(object):
         periods = []
 
         def mysine(x, a1, a2, a3):
+            """
+            simple sine model
+            """
             return a1 * np.sin(a2 * x + a3)
 
+        def mygauss(x, sigma):
+            """
+            simple gauss distribution model
+            """
+            return mlab.normpdf(x, mu, sigma)
+
+        # normalization/standardization
+        # probably unneccessary
+#        self.prep = (self.prep - self.prep.mean())/self.prep.std()
+
         # presmoothing needed
-        plt.plot(self.prep)
         # TODO filter size is a hard question
-        self.prep = uniform_filter1d(self.prep, size=20)
-        plt.plot(self.prep)
-        plt.show()
+        self.prep = uniform_filter1d(self.prep, size=21)
 
         # usually, within the range of 25-30 repetitions,
         # the following tries result in an error
@@ -175,10 +187,9 @@ class TempStab(object):
 
                 period = 2*np.pi/frequency
 
-                xx = self.numdate
-                yy = mysine(xx, amplitude, frequency, phase)
+                this_sine = mysine(self.numdate, amplitude, frequency, phase)
 
-                self.prep -= yy
+                self.prep -= this_sine
 
                 periods.append(period)
 
@@ -190,31 +201,82 @@ class TempStab(object):
         keep = np.abs(periods) < 1.1*len(self.prep)
         periods = list(compress(periods, keep))
 
-        # the histogram of the data
-        n, bins, patches = plt.hist(periods, 10, normed=1,
-                                    facecolor='green', alpha=0.75)
+#############
+        # the histogram of the data (can be deleted)
+        n, bins, patches = plt.hist(periods, 100, normed=1,
+                                    facecolor='black', alpha=0.75)
 
         plt.xlabel('Periods')
         plt.ylabel('Probability')
-#        plt.axis([0, 450, 0, 0.03])
+        plt.xlim([0, 500])
         plt.grid(True)
+#############
 
-#        plt.show()
+        # kernel density for a smoother histogram
+        # TODO bandwidth is a hard question
+        # IDEA: http://www.stat.washington.edu/courses/
+        #                  stat527/s14/readings/Turlach.pdf
+        # (4a)
+        bw = 1.06 * min([np.std(periods),
+                         iqr(periods)/1.34]) * (len(periods)**(-0.2))
+#        print(bw)
 
-        kde = KernelDensity(kernel='gaussian', bandwidth=10).\
+        kde = KernelDensity(kernel='gaussian',
+                            bandwidth=bw, rtol=1E-4).\
             fit(np.array(periods).reshape(-1, 1))
+        print kde.__dict__.keys()
+
+        # smooth linspace for possible periods
+        # (just a bit more than those observed)
         temp_res = np.linspace(0.9*min(periods),
                                1.1*max(periods),
                                len(self.prep)*1.5)
+
         kde_hist = np.exp(kde.score_samples(temp_res.reshape(-1, 1)))
 
         plt.plot(temp_res, kde_hist)
 
-        peaks = signal.argrelextrema(kde_hist, np.greater)
+        peaks = signal.argrelextrema(kde_hist, np.greater)[0]
+
+        mu = temp_res[peaks][kde_hist[peaks].argmax()]
+
+        guess = [1]
+
+        peak_range_width = 41.
+        peak_range = peaks[kde_hist[peaks].argmax()] +\
+            np.arange(-np.floor(peak_range_width/2.),
+                      +np.floor(peak_range_width/2.)+1)
+        peak_range = peak_range.astype(int)
+
+        weights = mlab.normpdf(temp_res[peak_range],
+                               temp_res[peaks[kde_hist[peaks].argmax()]],
+                               0.1*peak_range_width)
+        weights = weights/weights.sum()
+#        plt.plot(temp_res[peak_range], weights)
+
+        (std), pcov = optimize.curve_fit(mygauss,
+                                         temp_res[peak_range],
+                                         kde_hist[peak_range],
+                                         guess,
+                                         sigma=weights,
+                                         absolute_sigma=True)
+
+        plt.plot(temp_res[peak_range], kde_hist[peak_range])
+
+        print(mu, std[0])
 
         plt.plot(temp_res[peaks], kde_hist[peaks], '+')
+#        plt.plot(temp_res, mygauss(temp_res, std[0]))
+
+        kde_hist -= mygauss(temp_res, std[0])
+
+#        plt.plot(temp_res, kde_hist)
+
+        peaks = signal.argrelextrema(kde_hist, np.greater)[0]
+#        plt.plot(temp_res[peaks], kde_hist[peaks], 'o')
 
         print(temp_res[peaks])
+        print(temp_res[peaks][kde_hist[peaks].argmax()])
 
         self.periods = 24.
         print('Calculating the periodicities finished.')
