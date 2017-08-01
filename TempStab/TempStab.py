@@ -19,6 +19,59 @@ from models import LinearTrend, SineSeasonk, SineSeason1, SineSeason3
 import matplotlib.pyplot as plt
 import matplotlib.mlab as mlab
 
+####
+# Additional functions
+
+
+def mysine(x, a1, a2, a3):
+    """
+    simple sine model
+    """
+    return a1 * np.sin(a2 * x + a3)
+
+
+def multisine(x, a1, a2, a3):
+    """
+    multiple sine model
+    """
+    init = x*0.
+    for i in range(len(a1)):
+        init += mysine(x, a1[i], a2[i], a3[i])
+    return init
+
+
+def wrapper_multisine(x, *args):
+    """
+    wrapper for multiple sine model
+    """
+    equal_len = 1/3*len(args)
+    a1, a2, a3 = list(args[:equal_len]), \
+        list(args[equal_len:2*equal_len]), \
+        list(args[2*equal_len:3*equal_len])
+    return multisine(x, a1, a2, a3)
+
+
+def mygauss(x, sigma):
+    """
+    simple gauss distribution model without defining mu
+    """
+    global mu
+    return mlab.normpdf(x, mu, sigma)
+
+
+def nargmax(x, n=1):
+    """
+    get the n biggest values of x (np.array)
+    """
+    args = []
+    x = x.astype(float)
+    for i in range(n):
+        argmax = x.argmax()
+        args.append(argmax)
+        x[argmax] = -np.inf
+    return args
+####
+
 
 class TempStab(object):
     """
@@ -136,28 +189,15 @@ class TempStab(object):
 
         self.numdate = np.array([toordinaltime(d) for d in self.dates])
 
-        self.__set_period__()
+        self.__set_periods__()
 
-    def __set_period__(self):
+    def __set_periods__(self):
         """
         determine periodic frequencies of data sampling from data
         """
-        # TODO: what is this supposed to do?
-        print('Calculating the periodicities of the data ...')
+        print('Calculating the periods of the data ...')
         self.__detrend__()
         periods = []
-
-        def mysine(x, a1, a2, a3):
-            """
-            simple sine model
-            """
-            return a1 * np.sin(a2 * x + a3)
-
-        def mygauss(x, sigma):
-            """
-            simple gauss distribution model
-            """
-            return mlab.normpdf(x, mu, sigma)
 
         # normalization/standardization
         # probably unneccessary
@@ -188,7 +228,6 @@ class TempStab(object):
                 period = 2*np.pi/frequency
 
                 this_sine = mysine(self.numdate, amplitude, frequency, phase)
-
                 self.prep -= this_sine
 
                 periods.append(period)
@@ -198,88 +237,106 @@ class TempStab(object):
                 break
 
         # reoccurences much longer than the time series don't make sense
-        keep = np.abs(periods) < 1.1*len(self.prep)
+        keep = np.abs(periods) < len(self.prep)
         periods = list(compress(periods, keep))
 
-#############
-        # the histogram of the data (can be deleted)
-        n, bins, patches = plt.hist(periods, 100, normed=1,
-                                    facecolor='black', alpha=0.75)
-
-        plt.xlabel('Periods')
-        plt.ylabel('Probability')
-        plt.xlim([0, 500])
-        plt.grid(True)
-#############
+#########
+#        # the histogram of the data (can be deleted)
+#        n, bins, patches = plt.hist(periods, 100, normed=1,
+#                                    facecolor='black', alpha=0.75)
+#
+#        plt.xlabel('Periods')
+#        plt.ylabel('Probability')
+#        plt.xlim([0, 500])
+#        plt.grid(True)
+##        plt.show()
+#########
 
         # kernel density for a smoother histogram
-        # TODO bandwidth is a hard question
-        # IDEA: http://www.stat.washington.edu/courses/
+        # bandwidth: http://www.stat.washington.edu/courses/
         #                  stat527/s14/readings/Turlach.pdf
         # (4a)
-        bw = 1.06 * min([np.std(periods),
-                         iqr(periods)/1.34]) * (len(periods)**(-0.2))
-#        print(bw)
-
+        if len(periods) > 1:
+            bw = 1.06 * min([np.std(periods),
+                             iqr(periods)/1.34]) * (len(periods)**(-0.2))
+        else:
+            bw = 0.1
         kde = KernelDensity(kernel='gaussian',
                             bandwidth=bw, rtol=1E-4).\
             fit(np.array(periods).reshape(-1, 1))
-        print kde.__dict__.keys()
 
         # smooth linspace for possible periods
-        # (just a bit more than those observed)
-        temp_res = np.linspace(0.9*min(periods),
-                               1.1*max(periods),
-                               len(self.prep)*1.5)
-
+        # (just a bit more than those observed with a higher resolution)
+        temp_res = np.linspace(0.5*min(periods),
+                               1.5*max(periods),
+                               len(self.prep)*2)
         kde_hist = np.exp(kde.score_samples(temp_res.reshape(-1, 1)))
-
-        plt.plot(temp_res, kde_hist)
-
-        peaks = signal.argrelextrema(kde_hist, np.greater)[0]
-
-        mu = temp_res[peaks][kde_hist[peaks].argmax()]
-
-        guess = [1]
-
-        peak_range_width = 41.
-        peak_range = peaks[kde_hist[peaks].argmax()] +\
-            np.arange(-np.floor(peak_range_width/2.),
-                      +np.floor(peak_range_width/2.)+1)
-        peak_range = peak_range.astype(int)
-
-        weights = mlab.normpdf(temp_res[peak_range],
-                               temp_res[peaks[kde_hist[peaks].argmax()]],
-                               0.1*peak_range_width)
-        weights = weights/weights.sum()
-#        plt.plot(temp_res[peak_range], weights)
-
-        (std), pcov = optimize.curve_fit(mygauss,
-                                         temp_res[peak_range],
-                                         kde_hist[peak_range],
-                                         guess,
-                                         sigma=weights,
-                                         absolute_sigma=True)
-
-        plt.plot(temp_res[peak_range], kde_hist[peak_range])
-
-        print(mu, std[0])
-
-        plt.plot(temp_res[peaks], kde_hist[peaks], '+')
-#        plt.plot(temp_res, mygauss(temp_res, std[0]))
-
-        kde_hist -= mygauss(temp_res, std[0])
 
 #        plt.plot(temp_res, kde_hist)
 
+        # calculate peaks of smooth histogram
         peaks = signal.argrelextrema(kde_hist, np.greater)[0]
+
+        # calculate highest peaks
+        # should actually come from kernels!
+        periods = [temp_res[peaks][i]
+                   for i in nargmax(np.array(kde_hist[peaks]),
+                                    self.__num_periods__)]
+
+#########
+#        print(temp_res[peaks])
+#        print(temp_res[peaks][kde_hist[peaks].argmax()])
+#
+#        # trying to calculate and reduce the biggest peaks
+#        # (not working properly)
+#
+#        # first guess for mu
+#        mu = temp_res[peaks][kde_hist[peaks].argmax()]
+#        # first guess for sigma
+#        std_guess = [1]
+#
+#        # peak_range for optimization of gauss
+#        # peak_range_width how large???
+#        peak_range_width = 41.
+#        peak_range = peaks[kde_hist[peaks].argmax()] +\
+#            np.arange(-np.floor(peak_range_width/2.),
+#                      +np.floor(peak_range_width/2.)+1)
+#        peak_range = peak_range.astype(int)
+#
+#        # weights for peak_range opt
+#        weights = mlab.normpdf(temp_res[peak_range],
+#                               temp_res[peaks[kde_hist[peaks].argmax()]],
+#                               0.1*peak_range_width)
+#        weights = weights/weights.sum()
+##        plt.plot(temp_res[peak_range], weights)
+#
+#        # optimization of a gaussian curve within the peak_range
+#        (std), pcov = optimize.curve_fit(mygauss,
+#                                         temp_res[peak_range],
+#                                         kde_hist[peak_range],
+#                                         std_guess,
+#                                         sigma=weights,
+#                                         absolute_sigma=True)
+#
+#        plt.plot(temp_res[peak_range], kde_hist[peak_range])
+#        print(mu, std[0])
+#        plt.plot(temp_res[peaks], kde_hist[peaks], '+')
+#        plt.plot(temp_res, mygauss(temp_res, std[0]))
+#
+#        # substract peak from kde
+#        kde_hist -= mygauss(temp_res, std[0])
+#        plt.plot(temp_res, kde_hist)
+#
+#        # calculate new extremes
+#        peaks = signal.argrelextrema(kde_hist, np.greater)[0]
 #        plt.plot(temp_res[peaks], kde_hist[peaks], 'o')
+#
+#        print(temp_res[peaks])
+#        print(temp_res[peaks][kde_hist[peaks].argmax()])
+#########
 
-        print(temp_res[peaks])
-        print(temp_res[peaks][kde_hist[peaks].argmax()])
-
-        self.periods = 24.
-        print('Calculating the periodicities finished.')
+        self.periods = periods
+        print('Calculating periods finished.')
 
     def __scale_time__(self):
         """
@@ -326,10 +383,29 @@ class TempStab(object):
         keep = [not math.isnan(pp) for pp in self.prep]
         loc_prep = np.array(list(compress(self.prep, keep)))
         loc_numdate = np.array(list(compress(self.numdate, keep)))
-        sins = SineSeason1(loc_numdate, loc_prep, f=self.frequency)
-        sins.fit()  # estimate seasonal model parameters
-        self.__season_removed__ = sins.eval_func(self.numdate)
+#        sins = SineSeason1(loc_numdate, loc_prep, f=self.frequency)
+#        sins.fit()  # estimate seasonal model parameters
+#        self.__season_removed__ = sins.eval_func(self.numdate)
+#        self.prep -= self.__season_removed__
+        self.__season_removed__ = self.prep*0.
+
+        amplitudes = list(np.repeat((self.prep.max()-self.prep.min())/2,
+                                    len(self.periods)))
+        freqs = [2*np.pi/p for p in self.periods]
+        guess = amplitudes + freqs + list(np.repeat(1., len(self.periods)))
+        print(guess)
+
+        plt.plot(loc_numdate, loc_prep)
+
+        params, pcov = optimize.curve_fit(wrapper_multisine,
+                                          loc_numdate,
+                                          loc_prep,
+                                          guess)
+        print(params)
+
+        self.__season_removed__ += wrapper_multisine(self.numdate, params)
         self.prep -= self.__season_removed__
+
         print('Deseasonalization finished.')
 
     def __detrend__(self):

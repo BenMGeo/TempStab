@@ -13,7 +13,7 @@ t = np.arange(400)
 x = np.sin(t*2*np.pi/100+5)
 plt.plot(t, x)
 
-S = SineSeason1(t, x, f=200)
+S = SineSeason1(t, x, f=10)
 S.fit()
 print(S.param)
 fitted = S.eval_func(t)
