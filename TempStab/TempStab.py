@@ -35,7 +35,7 @@ def multisine(x, a1, a2, a3):
     multiple sine model
     """
     init = x*0.
-    for i in range(len(a1)):
+    for i, _ in enumerate(a1):
         init += mysine(x, a1[i], a2[i], a3[i])
     return init
 
@@ -44,7 +44,7 @@ def wrapper_multisine(x, *args):
     """
     wrapper for multiple sine model
     """
-    equal_len = 1/3*len(args)
+    equal_len = int(1./3.*len(args))
     a1, a2, a3 = list(args[:equal_len]), \
         list(args[equal_len:2*equal_len]), \
         list(args[2*equal_len:3*equal_len])
@@ -65,7 +65,7 @@ def nargmax(x, n=1):
     """
     args = []
     x = x.astype(float)
-    for i in range(n):
+    for _ in range(n):
         argmax = x.argmax()
         args.append(argmax)
         x[argmax] = -np.inf
@@ -113,6 +113,8 @@ class TempStab(object):
         self.__homogenize__ = kwargs.get('homogenize', None)
         self.__timescale__ = kwargs.get('timescale', 'months')
         self.__num_periods__ = kwargs.get('num_periods', 3)
+        # TODO smoothing filter size is a hard question
+        self.smoothing = kwargs.get('smoothing4periods', 21)
 
         self.__run__ = kwargs.get('run', False)
 
@@ -146,6 +148,12 @@ class TempStab(object):
         set the annual frequency of numerical dates for finding gaps
         """
         self.frequency = frequency
+
+    def set_smoothing4periods(self, smoothing_window):
+        """
+        set smoothing window for simpler evaluation of periods (denoise)
+        """
+        self.smoothing = smoothing_window
 
     def __check__(self):
         """
@@ -204,8 +212,7 @@ class TempStab(object):
 #        self.prep = (self.prep - self.prep.mean())/self.prep.std()
 
         # presmoothing needed
-        # TODO filter size is a hard question
-        self.prep = uniform_filter1d(self.prep, size=21)
+        self.prep = uniform_filter1d(self.prep, size=self.smoothing)
 
         # usually, within the range of 25-30 repetitions,
         # the following tries result in an error
@@ -232,13 +239,14 @@ class TempStab(object):
 
                 periods.append(period)
 
-            except:
+            except RuntimeError:
                 print(str(i) + " out of 100 frequencies calculated!")
                 break
 
         # reoccurences much longer than the time series don't make sense
         keep = np.abs(periods) < len(self.prep)
         periods = list(compress(periods, keep))
+        print(periods)
 
 #########
 #        # the histogram of the data (can be deleted)
@@ -249,7 +257,7 @@ class TempStab(object):
 #        plt.ylabel('Probability')
 #        plt.xlim([0, 500])
 #        plt.grid(True)
-##        plt.show()
+#        plt.show()
 #########
 
         # kernel density for a smoother histogram
@@ -260,7 +268,8 @@ class TempStab(object):
             bw = 1.06 * min([np.std(periods),
                              iqr(periods)/1.34]) * (len(periods)**(-0.2))
         else:
-            bw = 0.1
+            bw = 0.1  # default value; makes sense with only 1 period available
+
         kde = KernelDensity(kernel='gaussian',
                             bandwidth=bw, rtol=1E-4).\
             fit(np.array(periods).reshape(-1, 1))
@@ -284,6 +293,7 @@ class TempStab(object):
                                     self.__num_periods__)]
 
 #########
+#        this is supposed to find max values, but is not
 #        print(temp_res[peaks])
 #        print(temp_res[peaks][kde_hist[peaks].argmax()])
 #
@@ -308,7 +318,7 @@ class TempStab(object):
 #                               temp_res[peaks[kde_hist[peaks].argmax()]],
 #                               0.1*peak_range_width)
 #        weights = weights/weights.sum()
-##        plt.plot(temp_res[peak_range], weights)
+#        plt.plot(temp_res[peak_range], weights)
 #
 #        # optimization of a gaussian curve within the peak_range
 #        (std), pcov = optimize.curve_fit(mygauss,
@@ -389,21 +399,37 @@ class TempStab(object):
 #        self.prep -= self.__season_removed__
         self.__season_removed__ = self.prep*0.
 
+        # presmoothing needed for better access on periods
+        loc_prep = uniform_filter1d(loc_prep, size=self.smoothing)
+
+        # setting best guess and bounds for seasons
         amplitudes = list(np.repeat((self.prep.max()-self.prep.min())/2,
                                     len(self.periods)))
         freqs = [2*np.pi/p for p in self.periods]
         guess = amplitudes + freqs + list(np.repeat(1., len(self.periods)))
-        print(guess)
 
-        plt.plot(loc_numdate, loc_prep)
+        ubound = list(np.repeat(np.inf, len(self.periods))) + \
+            [f*1.1 for f in freqs] + \
+            list(np.repeat(np.inf, len(self.periods)))
+        lbound = list(np.repeat(-np.inf, len(self.periods))) + \
+            [f*0.9 for f in freqs] + \
+            list(np.repeat(-np.inf, len(self.periods)))
 
+        # fitting the curves to periods
         params, pcov = optimize.curve_fit(wrapper_multisine,
                                           loc_numdate,
                                           loc_prep,
-                                          guess)
-        print(params)
+                                          guess,
+                                          bounds=(lbound, ubound))
 
-        self.__season_removed__ += wrapper_multisine(self.numdate, params)
+        # updating periods
+        print(self.periods)
+        self.periods = [2*np.pi/p for p in
+                        list(params[len(self.periods):2*len(self.periods)])]
+        print(self.periods)
+
+        self.__season_removed__ += wrapper_multisine(self.numdate,
+                                                     *params)
         self.prep -= self.__season_removed__
 
         print('Deseasonalization finished.')
@@ -439,7 +465,7 @@ class TempStab(object):
 #        self.breakpoints = self._calc_breakpoints(self.array, **kwargs)
 #
 #        print self.breakpoints
-#        # print self.breakpoints, type(self.breakpoints), len(self.breakpoints)
+#        print self.breakpoints, type(self.breakpoints), len(self.breakpoints)
 #        if len(self.breakpoints) > 0:
 #            # estimate linear trend parameters for
 #            # each section between breakpoints
