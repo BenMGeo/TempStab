@@ -216,7 +216,7 @@ class TempStab(object):
 
         # usually, within the range of 25-30 repetitions,
         # the following tries result in an error
-        for i in range(100):
+        while len(periods) < self.__num_periods__:
 
             try:
                 prephat = fftpack.rfft(self.prep)
@@ -238,14 +238,14 @@ class TempStab(object):
                 self.prep -= this_sine
 
                 periods.append(period)
+                # reoccurences much longer than the time series don't make sense
+                keep = np.abs(periods) < len(self.prep)
+                periods = list(compress(periods, keep))
 
             except RuntimeError:
                 print(str(i) + " out of 100 frequencies calculated!")
                 break
 
-        # reoccurences much longer than the time series don't make sense
-        keep = np.abs(periods) < len(self.prep)
-        periods = list(compress(periods, keep))
         print(periods)
 
 #########
@@ -260,37 +260,37 @@ class TempStab(object):
 #        plt.show()
 #########
 
-        # kernel density for a smoother histogram
-        # bandwidth: http://www.stat.washington.edu/courses/
-        #                  stat527/s14/readings/Turlach.pdf
-        # (4a)
-        if len(periods) > 1:
-            bw = 1.06 * min([np.std(periods),
-                             iqr(periods)/1.34]) * (len(periods)**(-0.2))
-        else:
-            bw = 0.1  # default value; makes sense with only 1 period available
-
-        kde = KernelDensity(kernel='gaussian',
-                            bandwidth=bw, rtol=1E-4).\
-            fit(np.array(periods).reshape(-1, 1))
-
-        # smooth linspace for possible periods
-        # (just a bit more than those observed with a higher resolution)
-        temp_res = np.linspace(0.5*min(periods),
-                               1.5*max(periods),
-                               len(self.prep)*2)
-        kde_hist = np.exp(kde.score_samples(temp_res.reshape(-1, 1)))
-
-#        plt.plot(temp_res, kde_hist)
-
-        # calculate peaks of smooth histogram
-        peaks = signal.argrelextrema(kde_hist, np.greater)[0]
-
-        # calculate highest peaks
-        # should actually come from kernels!
-        periods = [temp_res[peaks][i]
-                   for i in nargmax(np.array(kde_hist[peaks]),
-                                    self.__num_periods__)]
+#        # kernel density for a smoother histogram
+#        # bandwidth: http://www.stat.washington.edu/courses/
+#        #                  stat527/s14/readings/Turlach.pdf
+#        # (4a)
+#        if len(periods) > 1:
+#            bw = 1.06 * min([np.std(periods),
+#                             iqr(periods)/1.34]) * (len(periods)**(-0.2))
+#        else:
+#            bw = 0.1  # default value; makes sense with only 1 period available
+#
+#        kde = KernelDensity(kernel='gaussian',
+#                            bandwidth=bw, rtol=1E-4).\
+#            fit(np.array(periods).reshape(-1, 1))
+#
+#        # smooth linspace for possible periods
+#        # (just a bit more than those observed with a higher resolution)
+#        temp_res = np.linspace(0.5*min(periods),
+#                               1.5*max(periods),
+#                               len(self.prep)*2)
+#        kde_hist = np.exp(kde.score_samples(temp_res.reshape(-1, 1)))
+#
+##        plt.plot(temp_res, kde_hist)
+#
+#        # calculate peaks of smooth histogram
+#        peaks = signal.argrelextrema(kde_hist, np.greater)[0]
+#
+#        # calculate highest peaks
+#        # should actually come from kernels!
+#        periods = [temp_res[peaks][i]
+#                   for i in nargmax(np.array(kde_hist[peaks]),
+#                                    self.__num_periods__)]
 
 #########
 #        this is supposed to find max values, but is not
