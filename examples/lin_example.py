@@ -16,18 +16,27 @@ from TempStab import rdp_bp, rdp_bp_iter
 from scipy import interpolate
 from scipy import signal
 
-xs = np.linspace(0,10*365,10*365)
+len_years = 5
+xs = np.linspace(1,len_years*365,len_years*365)
 m = -0.02
 t = 3
 lin = m*xs+t
 
 yearly = 4.8 * np.sin(np.pi*2*((xs+25)/365.2425))
 monthly = 3.1 * np.cos(np.pi*2*((xs+1)/28))
-daily = 1.1 * np.sin(np.pi*2*((xs+50)/7))
+#daily = 1.1 * np.sin(np.pi*2*((xs+50)/7))
 
-noise = (np.random.rand(len(xs)) - 0.5) * 3
+noise = np.random.rand(len(xs)) * np.nan
+1
+while any(np.isnan(noise)):
+    for i, _ in enumerate(noise):
+        if i == 0:
+            noise[i] = np.random.rand(1)
+        else:
+            A = 3.75
+            noise[i] = abs(A*noise[i-1] * (1-noise[i-1]))
 
-the_ts = lin + yearly + monthly + daily + noise
+the_ts = lin + yearly + monthly + noise*2
 
 
 #start = np.random.randint(100, 399)
@@ -76,7 +85,8 @@ plt.legend(bbox_to_anchor=(0., 1.02, 1., .102), loc=3,
 #    plt.axvline(x=bp)
 plt.show()
 
-plt.plot(TS.numdate, TS.prep, label = "no trend, no season")
+plt.plot(TS.numdate, TS.prep, label = "no trend, no season (?)")
+plt.legend()
 #
 #print(np.diff(BP["bp"]))
 #print(np.array(seqs))
