@@ -39,13 +39,13 @@ while any(np.isnan(noise)):
 the_ts = lin + yearly + monthly + noise*2
 
 
-#start = np.random.randint(100, 399)
-#
-#stop = start + np.random.randint(10, 80)
-#
-#gap = np.arange(start, stop)
-#
-#the_ts[gap] = np.nan
+start = np.random.randint(100, 399)
+
+stop = start + np.random.randint(10, 80)
+
+gap = np.arange(start, stop)
+
+the_ts[gap] = np.nan
 
 
 tdt = datetime.datetime.today()

@@ -10,65 +10,65 @@ import math
 from itertools import compress
 import numpy as np
 from scipy import signal
-from scipy.stats import iqr
+# from scipy.stats import iqr
 import scipy.fftpack as fftpack
 import scipy.optimize as optimize
 from scipy.ndimage.filters import uniform_filter1d
-from sklearn.neighbors import KernelDensity
-from models import LinearTrend, SineSeasonk, SineSeason1, SineSeason3
-import matplotlib.pyplot as plt
-import matplotlib.mlab as mlab
+# from sklearn.neighbors import KernelDensity
+from models import LinearTrend, SineSeason3  # , SineSeasonk, SineSeason1
+# import matplotlib.pyplot as plt
+# import matplotlib.mlab as mlab
 
 ####
 # Additional functions
 
 
-def mysine(x, a1, a2, a3):
+def mysine(array, para1, para2, para3):
     """
     simple sine model
     """
-    return a1 * np.sin(a2 * x + a3)
+    return para1 * np.sin(para2 * array + para3)
 
 
-def multisine(x, a1, a2, a3):
+def multisine(array, para1, para2, para3):
     """
     multiple sine model
     """
-    init = x*0.
-    for i, _ in enumerate(a1):
-        init += mysine(x, a1[i], a2[i], a3[i])
+    init = array*0.
+    for i, _ in enumerate(para1):
+        init += mysine(array, para1[i], para2[i], para3[i])
     return init
 
 
-def wrapper_multisine(x, *args):
+def wrapper_multisine(array, *args):
     """
     wrapper for multiple sine model
     """
     equal_len = int(1./3.*len(args))
-    a1, a2, a3 = list(args[:equal_len]), \
+    para1, para2, para3 = list(args[:equal_len]), \
         list(args[equal_len:2*equal_len]), \
         list(args[2*equal_len:3*equal_len])
-    return multisine(x, a1, a2, a3)
+    return multisine(array, para1, para2, para3)
 
 
-def mygauss(x, sigma):
-    """
-    simple gauss distribution model without defining mu
-    """
-    global mu
-    return mlab.normpdf(x, mu, sigma)
+# def mygauss(x, sigma):
+#    """
+#    simple gauss distribution model without defining mu
+#    """
+#    global mu
+#    return mlab.normpdf(x, mu, sigma)
 
 
-def nargmax(x, n=1):
+def nargmax(array, num=1):
     """
     get the n biggest values of x (np.array)
     """
     args = []
-    x = x.astype(float)
-    for _ in range(n):
-        argmax = x.argmax()
+    array = array.astype(float)
+    for _ in range(num):
+        argmax = array.argmax()
         args.append(argmax)
-        x[argmax] = -np.inf
+        array[argmax] = -np.inf
     return args
 ####
 
@@ -238,12 +238,13 @@ class TempStab(object):
                 self.prep -= this_sine
 
                 periods.append(period)
-                # reoccurences much longer than the time series don't make sense
+                # reoccurences much longer than the time series
+                # don't make sense
                 keep = np.abs(periods) < len(self.prep)
                 periods = list(compress(periods, keep))
 
             except RuntimeError:
-                print(str(i) + " out of 100 frequencies calculated!")
+                # print(str(i) + " out of 100 frequencies calculated!")
                 break
 
         print(periods)
@@ -268,7 +269,8 @@ class TempStab(object):
 #            bw = 1.06 * min([np.std(periods),
 #                             iqr(periods)/1.34]) * (len(periods)**(-0.2))
 #        else:
-#            bw = 0.1  # default value; makes sense with only 1 period available
+#            bw = 0.1  # default value;
+#        # makes sense with only 1 period available
 #
 #        kde = KernelDensity(kernel='gaussian',
 #                            bandwidth=bw, rtol=1E-4).\
@@ -281,7 +283,7 @@ class TempStab(object):
 #                               len(self.prep)*2)
 #        kde_hist = np.exp(kde.score_samples(temp_res.reshape(-1, 1)))
 #
-##        plt.plot(temp_res, kde_hist)
+#        plt.plot(temp_res, kde_hist)
 #
 #        # calculate peaks of smooth histogram
 #        peaks = signal.argrelextrema(kde_hist, np.greater)[0]
@@ -537,38 +539,38 @@ class TempStab(object):
         self.filler = self.filler * 0. + np.mean(self.prep[np.logical_not(
             self.__identified_gaps__)])
 
-    def __gap_season__(self, t, x):
+    def __gap_season__(self, time, array):
         """
         produces linear filler with season (no noise)
         """
-        season = self.season_mod(t=t,
-                                 x=x,
+        season = self.season_mod(t=time,
+                                 x=array,
                                  f=self.frequency)
         season.fit()
         self.filler = season.eval_func(self.numdate)
 
-    def __gap_trend__(self, t, x):
+    def __gap_trend__(self, time, array):
         """
         produces linear filler with trend (no noise)
         """
         # calculate gaps environments (starts and stops)
         enlarged_gaps = signal.convolve(self.__identified_gaps__,
                                         np.array([1, 1, 1]))[1:-1] != 0
-        startsNstops = np.logical_xor(enlarged_gaps, self.__identified_gaps__)
-        sNs_pos = self.numdate[startsNstops]
+        starts_n_stops = np.logical_xor(enlarged_gaps, self.__identified_gaps__)
+        sns_pos = self.numdate[starts_n_stops]
 
         # full linear model
         # (get that from detrend? externalize a single function?)
-        lint = LinearTrend(t, x)
+        lint = LinearTrend(time, array)
         lint.fit()
 
-        for i in range(len(sNs_pos)/2):
-            if sNs_pos[(i*2)] <= sNs_pos[(i*2+1)]:
-                this_gap = np.logical_and(self.numdate > sNs_pos[(i*2)],
-                                          self.numdate < sNs_pos[(i*2+1)])
+        for i in range(len(sns_pos)/2):
+            if sns_pos[(i*2)] <= sns_pos[(i*2+1)]:
+                this_gap = np.logical_and(self.numdate > sns_pos[(i*2)],
+                                          self.numdate < sns_pos[(i*2+1)])
             else:
-                this_gap = np.logical_and(self.numdate > sNs_pos[(i*2+1)],
-                                          self.numdate < sNs_pos[(i*2)])
+                this_gap = np.logical_and(self.numdate > sns_pos[(i*2+1)],
+                                          self.numdate < sns_pos[(i*2)])
             self.filler[this_gap] = \
                 lint.eval_func(self.numdate[this_gap])
 
