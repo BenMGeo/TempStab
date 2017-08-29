@@ -16,8 +16,8 @@ import scipy.optimize as optimize
 from scipy.ndimage.filters import uniform_filter1d
 # from sklearn.neighbors import KernelDensity
 from models import LinearTrend, SineSeason3  # , SineSeasonk, SineSeason1
-# import matplotlib.pyplot as plt
-# import matplotlib.mlab as mlab
+import matplotlib.pyplot as plt
+import matplotlib.mlab as mlab
 
 ####
 # Additional functions
@@ -102,7 +102,6 @@ class TempStab(object):
 
         # constants:
         # numeric tolerance for shift
-        self.num_tol = 10**-8
         self.frequency = 365.2425
         self.periods = np.array([1])
 
@@ -136,12 +135,6 @@ class TempStab(object):
         does nothing!
         """
         pass
-
-    def set_num_tol(self, num_tol):
-        """
-        set the tolerance of numerical dates for finding gaps
-        """
-        self.num_tol = num_tol
 
     def set_frequency(self, frequency):
         """
@@ -211,26 +204,37 @@ class TempStab(object):
         # probably unneccessary
 #        self.prep = (self.prep - self.prep.mean())/self.prep.std()
 
+        keep = [not math.isnan(pp) for pp in self.prep]
+        loc_prep = np.array(list(compress(self.prep, keep)))
+        loc_numdate = np.array(list(compress(self.numdate, keep)))
+
         # presmoothing needed
-        self.prep = uniform_filter1d(self.prep, size=self.smoothing)
+        loc_prep = uniform_filter1d(loc_prep, size=self.smoothing)
+        self.prep[np.array(keep)] = loc_prep
 
         # usually, within the range of 25-30 repetitions,
         # the following tries result in an error
         while len(periods) < self.__num_periods__:
 
             try:
-                prephat = fftpack.rfft(self.prep)
+                prephat = fftpack.rfft(loc_prep)
                 idx = (prephat**2).argmax()
+
                 freqs = fftpack.rfftfreq(prephat.size,
-                                         d=np.abs(self.numdate[1] -
-                                                  self.numdate[0])/(2*np.pi))
+                                         d=np.min(np.abs(
+                                                 np.diff(loc_numdate)
+                                                 ))/(2*np.pi))
                 frequency = freqs[idx]
 
-                amplitude = self.prep.max()
+                amplitude = loc_prep.max()
                 guess = [amplitude, frequency, 0.]
 
+                keep = [not math.isnan(pp) for pp in self.prep]
+                loc_prep = np.array(list(compress(self.prep, keep)))
+                loc_numdate = np.array(list(compress(self.numdate, keep)))
+
                 (amplitude, frequency, phase), pcov = optimize.curve_fit(
-                    mysine, self.numdate, self.prep, guess)
+                    mysine, loc_numdate, loc_prep, guess)
 
                 period = 2*np.pi/frequency
 
@@ -246,8 +250,6 @@ class TempStab(object):
             except RuntimeError:
                 # print(str(i) + " out of 100 frequencies calculated!")
                 break
-
-        print(periods)
 
 #########
 #        # the histogram of the data (can be deleted)
@@ -400,12 +402,13 @@ class TempStab(object):
 #        self.__season_removed__ = sins.eval_func(self.numdate)
 #        self.prep -= self.__season_removed__
         self.__season_removed__ = self.prep*0.
+        self.__season_removed__[:] = 0.
 
         # presmoothing needed for better access on periods
         loc_prep = uniform_filter1d(loc_prep, size=self.smoothing)
 
         # setting best guess and bounds for seasons
-        amplitudes = list(np.repeat((self.prep.max()-self.prep.min())/2,
+        amplitudes = list(np.repeat((loc_prep.max()-loc_prep.min())/2,
                                     len(self.periods)))
         freqs = [2*np.pi/p for p in self.periods]
         guess = amplitudes + freqs + list(np.repeat(1., len(self.periods)))
@@ -425,10 +428,8 @@ class TempStab(object):
                                           bounds=(lbound, ubound))
 
         # updating periods
-        print(self.periods)
         self.periods = [2*np.pi/p for p in
                         list(params[len(self.periods):2*len(self.periods)])]
-        print(self.periods)
 
         self.__season_removed__ += wrapper_multisine(self.numdate,
                                                      *params)
@@ -556,7 +557,8 @@ class TempStab(object):
         # calculate gaps environments (starts and stops)
         enlarged_gaps = signal.convolve(self.__identified_gaps__,
                                         np.array([1, 1, 1]))[1:-1] != 0
-        starts_n_stops = np.logical_xor(enlarged_gaps, self.__identified_gaps__)
+        starts_n_stops = np.logical_xor(enlarged_gaps,
+                                        self.__identified_gaps__)
         sns_pos = self.numdate[starts_n_stops]
 
         # full linear model
@@ -610,8 +612,7 @@ class TempStab(object):
         fill any gap with nan
         """
         new_array = self.prep * np.NAN
-        keep = (self.numdate - self.__numdate_orig__) < self.num_tol
-        # TODO use np.isclose
+        keep = np.isclose(self.numdate, self.__numdate_orig__)
         new_array[keep] = self.prep[keep]
         self.prep = new_array
 

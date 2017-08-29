@@ -33,15 +33,15 @@ while any(np.isnan(noise)):
         if i == 0:
             noise[i] = np.random.rand(1)
         else:
-            A = 3.75
+            A = np.random.rand(1)*(4.-np.pi)+np.pi
             noise[i] = abs(A*noise[i-1] * (1-noise[i-1]))
 
-the_ts = lin + yearly + monthly + noise*2
+the_ts = lin + yearly + monthly + noise*25-12
 
 
 start = np.random.randint(100, 399)
 
-stop = start + np.random.randint(10, 80)
+stop = start + np.random.randint(100, 580)
 
 gap = np.arange(start, stop)
 
