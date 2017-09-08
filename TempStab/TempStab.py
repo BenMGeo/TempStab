@@ -14,6 +14,7 @@ from scipy import signal
 import scipy.fftpack as fftpack
 import scipy.optimize as optimize
 from scipy.ndimage.filters import uniform_filter1d
+import statsmodels.api as sm
 # from sklearn.neighbors import KernelDensity
 from models import LinearTrend, SineSeason3  # , SineSeasonk, SineSeason1
 import matplotlib.pyplot as plt
@@ -152,15 +153,12 @@ class TempStab(object):
         """
         checks the integrity of the input
         """
-        assert self.break_method is not None, \
-            'Method for breakpoint estimation needs to be provided'
+#        assert self.break_method is not None, \
+#            'Method for breakpoint estimation needs to be provided'
         assert len(self.dates) == len(self.array), \
             'Timeseries and data need to have the same dimension'
         assert isinstance(self.dates[0], datetime.datetime), \
             'Dates are not of type datetime'
-
-    def __set_break_model__(self):
-        pass
 
     def __set_season_model__(self):
         # note that the seasonal model needs to be consistent with the one
@@ -462,12 +460,12 @@ class TempStab(object):
         # fill data gaps if existing
         self.__identify_gaps__()
         self.__fill_gaps__()
-#
-#        # identify breakpoints in time based;
-#        # returns an array of indices with breakpoints
-#        self.breakpoints = self._calc_breakpoints(self.array, **kwargs)
-#
-#        print self.breakpoints
+
+        # identify breakpoints in time based;
+        # returns an array of indices with breakpoints
+        self.breakpoints = self.__calc_breakpoints__(self.array, **kwargs)
+
+        print self.breakpoints
 #        print self.breakpoints, type(self.breakpoints), len(self.breakpoints)
 #        if len(self.breakpoints) > 0:
 #            # estimate linear trend parameters for
@@ -622,3 +620,67 @@ class TempStab(object):
         """
         gaps = np.isnan(self.prep)
         return gaps
+
+    def __calc_breakpoints__(self, x, **kwargs):
+        """
+        calculating breakpoints based on set function self.Break
+        """
+        return self.__chosen_break__(x,
+                                     start=self.dates[0],
+                                     frequency=self.periods,
+                                     **kwargs)
+
+    def __set_break_model__(self):
+        """
+        set break_method
+        """
+
+        if self.break_method is None:
+            print("No breakpoint method assigned. Just gaps are filled.")
+            self.__chosen_break__ = self.__break_none__
+        elif self.break_method == 'olssum':
+            self.__chosen_break__ = self.__break_olssum__
+        elif self.break_method == 'bfast':
+            self.__chosen_break__ = self.__break_bfast__
+        elif self.break_method == 'dummy':
+            self.__chosen_break__ = self.__break_dummy__
+        elif self.break_method == 'wang':
+            self.__chosen_break__ = self.__break_wang__
+        else:
+            assert False, 'ERROR: Unknown breakpoint method'
+
+    def __break_none__(self, x, **kwargs):
+        """
+        no breakpoint analysis
+        Returns
+        res : ndarray
+            array with breakpoint indices
+        """
+        return np.array([])
+
+    def __break_wang__(self, x, **kwargs):
+        assert False, \
+            "Breakpoint method " + self.break_method + " not implemented yet!"
+
+    def __break_dummy__(self, x, **kwargs):
+        assert False, \
+            "Breakpoint method " + self.break_method + " not implemented yet!"
+
+    def __break_bfast__(self, x, **kwargs):
+        assert False, \
+            "Breakpoint method " + self.break_method + " not implemented yet!"
+
+    def __break_olssum__(self, x, **kwargs):
+        # remove overall linear trend using OLS
+        T = sm.add_constant(self.t)
+        model = sm.OLS(x,T)
+        results = model.fit()
+        #~ print results.params
+        #~ r = breaks_cusumolsresid(results.resid)  # todo: what to set as ddof???
+
+        # estimate potential breakpoints from residual timeseries
+        r =  self._get_breakpoints_spline(self.t, results.resid)
+        #~ print 'Breakpoints found: ', r
+        return r
+        #~ print r
+        #~ assert False

@@ -57,7 +57,7 @@ the_dates = [tdt - datetime.timedelta(days=x) for
 #plt.show()
 
 TS = TempStab(dates=the_dates, array=the_ts,
-              breakpoint_method="this", deseason=True, num_periods=3)
+              breakpoint_method="wang", deseason=True, num_periods=3)
 
 TS.analysis(homogenize=True)
 
