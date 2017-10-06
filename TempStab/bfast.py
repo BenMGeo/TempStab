@@ -51,7 +51,7 @@ def _run_bfast(x, maxiter=1000, season='harmonic', frequency=1, start=None, maxb
     rts = robjects.r['ts']
 
     # convert to time series
-    TS = rts(robjects.FloatVector(x), frequency=frequency, start=start)  # todo set frequencies etc
+    TS = rts(robjects.FloatVector(x), frequency=365.25, start=start)  # todo set frequencies etc
 
     # perform structural change analysis
     print('Running BFAST with maxiter=%s and maxbreak=%s' % (maxiter, maxbreaks))

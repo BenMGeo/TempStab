@@ -13,12 +13,14 @@ from scipy import signal
 # from scipy.stats import iqr
 import scipy.fftpack as fftpack
 import scipy.optimize as optimize
+from scipy import interpolate
 from scipy.ndimage.filters import uniform_filter1d
 import statsmodels.api as sm
 # from sklearn.neighbors import KernelDensity
 from models import LinearTrend, SineSeason3  # , SineSeasonk, SineSeason1
 import matplotlib.pyplot as plt
-import matplotlib.mlab as mlab
+#import matplotlib.mlab as mlab
+from bfast import BFAST
 
 ####
 # Additional functions
@@ -667,20 +669,95 @@ class TempStab(object):
             "Breakpoint method " + self.break_method + " not implemented yet!"
 
     def __break_bfast__(self, x, **kwargs):
-        assert False, \
-            "Breakpoint method " + self.break_method + " not implemented yet!"
+        """
+        calculate breakpoints in time using the BFAST method
+        Parameters
+        ----------
+        x : ndarray
+            data array
+
+        arguments in kwargs
+        start : datetime
+            start of timeseries
+        frequency : int
+            frequency of number of samples per year
+            e.g. 23 for 16-daily data = 365./16.
+
+
+        TODO: reasonable additional parameters!!!
+
+        Returns
+        -------
+        res : ndarray
+            array with indices of breakpoint occurence
+        """
+        B = BFAST()
+        B.run(x, **kwargs)
+        # return detected breakpoints from last itteration
+        #print B.results[0]['output'][-1]['ciVt']  
+        # this contains the confidence of the breakpoint estimation
+        res = B.results[0]['output'][-1]['bpVt']
+        
+        try:  # capture that no breakpoints are detected
+            n = len(res)
+        except:
+            if res == 0:
+                res = []
+            else:
+                assert False, 'CASE not covered yet'
+        return np.asarray(res).astype('int')
 
     def __break_olssum__(self, x, **kwargs):
+        # threshold for change detected        
+        # 1% 
+        self.__thresh_change__ = 0.01
+        
         # remove overall linear trend using OLS
-        T = sm.add_constant(self.t)
+        T = sm.add_constant(self.numdate)
         model = sm.OLS(x,T)
         results = model.fit()
-        #~ print results.params
-        #~ r = breaks_cusumolsresid(results.resid)  # todo: what to set as ddof???
+        
+        # initial result
+        r=[]
 
         # estimate potential breakpoints from residual timeseries
-        r =  self._get_breakpoints_spline(self.t, results.resid)
-        #~ print 'Breakpoints found: ', r
-        return r
-        #~ print r
-        #~ assert False
+        try:
+            r = self.__get_breakpoints_spline__(self.numdate, results.resid)
+        except:
+            try:
+                r = self.__get_breakpoints_spline__(np.flip(self.numdate,0),
+                                                    np.flip(results.resid,0))
+                r = [len(self.numdate)-ri for ri in r]
+            except:
+                print("There is something wrong with the datasets" +\
+                      "for calculating breaking points." +\
+                      " Flipping does not produce right order.")
+        return(r)
+        
+    def __get_breakpoints_spline__(self, x, y):
+        # estimate breakpoints using splines
+        #http://stackoverflow.com/questions/29382903/
+        #       how-to-apply-piecewise-linear-fit-in-python
+        yn = interpolate.splrep(x, y, k=1, s=0)
+        d1 = np.abs(interpolate.splev(x, yn, der=1))  
+        # absolute of first derivative
+        
+        # now find the results that are not similar to others
+        # first sort results
+        sidx = d1.argsort()
+        idx = np.arange(len(d1))[sidx]
+        
+        ds = d1[d1.argsort()]
+        
+        r = []
+        for i in xrange(len(ds)-1,-1,-1):
+            if ds[i] > 1.E-6:
+                # check if ratio between subsequent slope values changes 
+                # by more than self.__thresh_change__ --> does not work if 
+                # jumps with same magnitude occur!
+                if np.abs(1.-(ds[i]/ds[i-1])) > self.__thresh_change__:   
+                    r.append(idx[i]+1)
+                else:
+                    break
+                
+        return(r)
