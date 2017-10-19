@@ -10,6 +10,7 @@ import math
 from itertools import compress
 import numpy as np
 from scipy import signal
+from scipy.stats import mode
 # from scipy.stats import iqr
 import scipy.fftpack as fftpack
 import scipy.optimize as optimize
@@ -95,6 +96,8 @@ class TempStab(object):
         self.season_mod = self.__do_nothing__
         self.numdate = np.linspace(1, 100, num=len(dates))
         self.filler = None
+        self.trend = None
+        self.homogenized = None
         self.__season_removed__ = None
         self.__trend_removed__ = None
         self.__orig__ = array.copy()
@@ -452,7 +455,10 @@ class TempStab(object):
         print('Detrending finished.')
 
     def analysis(self, homogenize=None, **kwargs):
-
+        """
+        analyse for breakpoints
+        """
+        
         self.__prep_orig__ = self.prep.copy()
         self.__numdate_orig__ = self.numdate.copy()
 
@@ -465,48 +471,149 @@ class TempStab(object):
 
         # identify breakpoints in time based;
         # returns an array of indices with breakpoints
-        self.breakpoints = self.__calc_breakpoints__(self.array, **kwargs)
+        self.breakpoints = np.sort(self.__calc_breakpoints__(self.array,
+                                                             **kwargs))
 
-        print self.breakpoints
-#        print self.breakpoints, type(self.breakpoints), len(self.breakpoints)
-#        if len(self.breakpoints) > 0:
-#            # estimate linear trend parameters for
-#            # each section between breakpoints
-#            self.trend = self._get_trend_parameters(self.breakpoints, self.x)
-#
-#            # in case that breakpoints occur, perform a normalizaion of the
-#            # timeseries which corresponds to a removal of the segmentwise
-#            # linear offsets of the linear trends, the slope is not corrected
-#            # for
-#            if homogenize:
-#                yn = self._homogenization()
-#                # fig = plt.figure()
-#                # ax = fig.add_subplot(111)
-#                # ax.plot(self.x)
-#                # ax.plot(yn)
-#                # plt.show()
-#                # assert False
-#            else:
-#                yn = self.array
-#        else:
-#            self.trend = None
-#            yn = self.array
-#
-#        # perform final trend estimation
-#        L = LinearTrend(self.dates, yn)  # TODO uncertatinties???
-#        L.fit()  # should store also significance information if possible
+        if len(self.breakpoints) > 0:
+            # estimate linear trend parameters for
+            # each section between breakpoints
+            self.trend = self.__get_trend_parameters__(self.breakpoints,
+                                                       self.array)
+
+            # in case that breakpoints occur, perform a normalizaion of the
+            # timeseries which corresponds to a removal of the segmentwise
+            # linear offsets of the linear trends, the slope is not corrected
+            # for
+            if homogenize:
+                self.homogenized = self.__homogenization__()
+#                fig = plt.figure()
+#                ax = fig.add_subplot(111)
+#                ax.plot(self.prep, label = "prep")
+#                ax.plot(yn, label = "yn")
+#                plt.legend()
+#                plt.show()
+#                assert False
+            else:
+                self.homogenized = None
+        else:
+            self.trend = None
+            self.homogenized = self.array
+
+        # perform final trend estimation
+        L = LinearTrend(self.numdate, self.homogenized)  # TODO uncertatinties???
+        L.fit()  # should store also significance information if possible
 
         res = {}
-        res.update({"array": self.array})
-#        res.update({'trend': {'slope': L.param[0], 'offset': L.param[1]}})
-#        res.update({'yn': yn*1.})
-#        res.update({'yorg': self.x*1.})
-#        res.update({'yraw': self._raw*1.})
-#        res.update({'season': self._season_removed*1.})
-#        res.update({'breakpoints': self.breakpoints})
-#        res.update({'nbreak': len(self.breakpoints)})
-
+        res.update({'trend' : {'slope' : L.param[0], 'offset' : L.param[1]}})
+        res.update({'yn' : self.homogenized*1.})
+        res.update({'yorg' : self.array*1.})
+        res.update({'yraw' : self.__orig__*1.})
+        res.update({'season' : self.__season_removed__*1.})
+        res.update({'breakpoints' : self.breakpoints})
+        res.update({'nbreak' : len(self.breakpoints)})
         return res
+    
+    def __get_indices__(self, bp, i, n):
+        """
+        returns indices of boundaries so these can be
+        directly used for indexing
+        """
+        i1 = bp[i]
+        if i < len(bp)-1:
+            i2 = bp[i+1]
+        else:
+            i2 = n
+        return min([i1, i2]), max([i1, i2])
+
+    def __get_trend_parameters__(self, bp, x, remove_seasonality=False):
+        """
+        calculate linear trend parameters for each segment between breakpoints
+
+        todo: significance of trends xxx, consideration of uncertainties of
+        samples
+        how to deal wih seasonality here ??? would need to be removed ???
+
+        Parameters
+        ----------
+        bp : ndarray, list
+            list with indices of breakpoints
+        x : ndarray
+            data array; this is explicitely provided as argument as it might be
+            constructed from e.g. detrended or deseasonalized timeseries
+        """
+        trends = []
+
+        if len(bp) == 0:
+            return trends
+        xx = self.numdate[0:bp[0]]
+        yy = x[0:bp[0]]
+        if remove_seasonality:
+            assert False
+
+        # estimate piecewise linear trend
+        L = LinearTrend(xx, yy) ### todo uncertatinis???
+        L.fit()
+        L.__i1__ = 0
+        L.__i2__ = bp[0]
+        trends.append(L)
+        n = len(x)
+        for i in xrange(len(bp)):
+            i1, i2 = self.__get_indices__(bp, i, n)
+            L = LinearTrend(self.numdate[i1:i2], x[i1:i2])
+            L.__i1__= i1
+            L.__i2__ = i2
+            L.fit()
+            trends.append(L)
+        return trends
+    
+    def __homogenization__(self):
+        """
+        perform a homogenization of the timeseries
+        by removing the detected breakpoint impacts
+        """
+        # should use self.trend which has been estimated already before
+        return self.__remove_trend_offset__(self.numdate, self.trend)
+    
+    def __remove_trend_offset__(self, x, trends):
+        """
+        remove offset of linear trends
+        slope is not corrected for
+        this routine is used to remove jumps
+        caused by structural breakpoints in the timeseries
+        """
+        r = np.zeros_like(self.array) * np.nan
+
+        O = 0.
+
+        for i in xrange(len(trends)-1):
+            T1=trends[i]  
+            T2=trends[i+1]
+            hlp = np.append(r[:T1.__i1__], self.array[T1.__i1__:T1.__i2__])
+            F = T2.eval_func(x[T2.__i1__:T2.__i2__])
+            L = T1.eval_func(x[T1.__i1__:T1.__i2__])
+            O = (L[-1]-F[0])
+#            plt.plot(x[T1.__i1__:T2.__i2__],np.append(L,F))
+#            plt.plot(x[T1.__i1__:T2.__i2__],np.append(L-O,F))
+#            plt.show()
+            hlp -= O
+            r[:T1.__i2__] = hlp*1.
+#            plt.plot(self.array + r*0, label = "orig")
+#            plt.plot(r, label = "corr")
+#            plt.legend()
+#            plt.show()
+        r[T2.__i1__:T2.__i2__] = self.array[T2.__i1__:T2.__i2__]
+#        plt.plot(self.array + r*0, label = "orig")
+#        plt.plot(r, label = "corr")
+#        plt.legend()
+#        plt.show()
+        # correct for same mode (?)
+        print("mode")
+        print(mode(r).mode[0],mode(self.array).mode[0],mode(r).mode[0]-mode(self.array).mode[0])
+        print("mean")
+        print(np.mean(r),np.mean(self.array),np.mean(r)-np.mean(self.array))
+        print("median")
+        print(np.median(r),np.median(r),np.median(r)-np.median(r))
+        return r
 
     def __fill_gaps__(self):
         """
@@ -700,6 +807,7 @@ class TempStab(object):
         
         try:  # capture that no breakpoints are detected
             n = len(res)
+            del n
         except:
             if res == 0:
                 res = []
@@ -761,3 +869,27 @@ class TempStab(object):
                     break
                 
         return(r)
+        
+        
+    def reanalysis(self):
+        """
+        redo all calulations after gapfilling and homogenization
+        """
+        print(self.homogenized)
+        
+        if self.homogenized is not None:
+            self.array = self.homogenized*1.
+        else:
+            if self.__season_removed__ is not None:
+                self.array = self.prep + \
+                    self.__trend_removed__ + self.__season_removed__
+            elif self.__trend_removed__ is not None:
+                self.array = self.prep + self.__trend_removed__
+            else:
+                self.array = self.prep
+                
+        self.__preprocessing__()
+        self.analysis(homogenize=(self.homogenized is not None))
+            
+        
+        
