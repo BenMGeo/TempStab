@@ -10,65 +10,68 @@ import math
 from itertools import compress
 import numpy as np
 from scipy import signal
-from scipy.stats import iqr
+from scipy.stats import mode
+# from scipy.stats import iqr
 import scipy.fftpack as fftpack
 import scipy.optimize as optimize
+from scipy import interpolate
 from scipy.ndimage.filters import uniform_filter1d
-from sklearn.neighbors import KernelDensity
-from models import LinearTrend, SineSeasonk, SineSeason1, SineSeason3
-import matplotlib.pyplot as plt
-import matplotlib.mlab as mlab
+import statsmodels.api as sm
+# from sklearn.neighbors import KernelDensity
+from models import LinearTrend, SineSeason3  # , SineSeasonk, SineSeason1
+#import matplotlib.pyplot as plt
+from bfast import BFAST
 
 ####
 # Additional functions
 
 
-def mysine(x, a1, a2, a3):
+def mysine(array, para1, para2, para3):
     """
     simple sine model
     """
-    return a1 * np.sin(a2 * x + a3)
+    return para1 * np.sin(para2 * array + para3)
 
 
-def multisine(x, a1, a2, a3):
+def multisine(array, para1, para2, para3):
     """
     multiple sine model
     """
-    init = x*0.
-    for i, _ in enumerate(a1):
-        init += mysine(x, a1[i], a2[i], a3[i])
+    init = array*0.
+    for i, _ in enumerate(para1):
+        init += mysine(array, para1[i], para2[i], para3[i])
     return init
 
 
-def wrapper_multisine(x, *args):
+def wrapper_multisine(array, *args):
     """
     wrapper for multiple sine model
     """
     equal_len = int(1./3.*len(args))
-    a1, a2, a3 = list(args[:equal_len]), \
+    para1, para2, para3 = list(args[:equal_len]), \
         list(args[equal_len:2*equal_len]), \
         list(args[2*equal_len:3*equal_len])
-    return multisine(x, a1, a2, a3)
+    return multisine(array, para1, para2, para3)
 
 
-def mygauss(x, sigma):
-    """
-    simple gauss distribution model without defining mu
-    """
-    global mu
-    return mlab.normpdf(x, mu, sigma)
+# def mygauss(x, sigma):
+#    """
+#    simple gauss distribution model without defining mu
+#    """
+#    global mu
+#    return mlab.normpdf(x, mu, sigma)
 
 
-def nargmax(x, n=1):
+def nargmax(array, num=1):
     """
     get the n biggest values of x (np.array)
     """
     args = []
-    x = x.astype(float)
-    for _ in range(n):
-        argmax = x.argmax()
+    array = array.astype(float)
+    for _ in range(num):
+        argmax = array.argmax()
         args.append(argmax)
-        x[argmax] = -np.inf
+        array[argmax] = -np.inf
     return args
 ####
 
@@ -87,22 +90,23 @@ class TempStab(object):
 
         self.dates = dates[:]
         self.array = array.copy()
-        self.prep = array.copy()
+        self.prep = self.array.copy()
         self.season = []
         self.season_mod = self.__do_nothing__
         self.numdate = np.linspace(1, 100, num=len(dates))
         self.filler = None
+        self.trend = None
+        self.homogenized = None
         self.__season_removed__ = None
         self.__trend_removed__ = None
-        self.__orig__ = array.copy()
-        self.__prep_orig__ = array.copy()
+        self.__orig__ = self.array.copy()
+        self.__prep_orig__ = self.array.copy()
         self.__numdate_orig__ = self.numdate.copy()
         self.__identified_gaps__ = []
         self.__min_time_step__ = None
 
         # constants:
         # numeric tolerance for shift
-        self.num_tol = 10**-8
         self.frequency = 365.2425
         self.periods = np.array([1])
 
@@ -115,6 +119,8 @@ class TempStab(object):
         self.__num_periods__ = kwargs.get('num_periods', 3)
         # TODO smoothing filter size is a hard question
         self.smoothing = kwargs.get('smoothing4periods', 21)
+        self.__detrend_bool__ = kwargs.get('detrend', False)
+        self.__deseason_bool__ = kwargs.get('deseason', False)
 
         self.__run__ = kwargs.get('run', False)
 
@@ -122,11 +128,12 @@ class TempStab(object):
         self.__set_break_model__()
         self.__set_season_model__()
         self.__set_time__()
+        self.__set_periods__()
         self.__scale_time__()
         self.__check__()
 
         # Run routine
-        self.__preprocessing__(**kwargs)
+        self.__preprocessing__()
 
         if self.__run__:
             self.analysis(homogenize=self.__homogenize__, **kwargs)
@@ -136,12 +143,6 @@ class TempStab(object):
         does nothing!
         """
         pass
-
-    def set_num_tol(self, num_tol):
-        """
-        set the tolerance of numerical dates for finding gaps
-        """
-        self.num_tol = num_tol
 
     def set_frequency(self, frequency):
         """
@@ -159,15 +160,12 @@ class TempStab(object):
         """
         checks the integrity of the input
         """
-        assert self.break_method is not None, \
-            'Method for breakpoint estimation needs to be provided'
+#        assert self.break_method is not None, \
+#            'Method for breakpoint estimation needs to be provided'
         assert len(self.dates) == len(self.array), \
             'Timeseries and data need to have the same dimension'
         assert isinstance(self.dates[0], datetime.datetime), \
             'Dates are not of type datetime'
-
-    def __set_break_model__(self):
-        pass
 
     def __set_season_model__(self):
         # note that the seasonal model needs to be consistent with the one
@@ -197,7 +195,6 @@ class TempStab(object):
 
         self.numdate = np.array([toordinaltime(d) for d in self.dates])
 
-        self.__set_periods__()
 
     def __set_periods__(self):
         """
@@ -211,26 +208,37 @@ class TempStab(object):
         # probably unneccessary
 #        self.prep = (self.prep - self.prep.mean())/self.prep.std()
 
+        keep = [not math.isnan(pp) for pp in self.prep]
+        loc_prep = np.array(list(compress(self.prep, keep)))
+        loc_numdate = np.array(list(compress(self.numdate, keep)))
+
         # presmoothing needed
-        self.prep = uniform_filter1d(self.prep, size=self.smoothing)
+        loc_prep = uniform_filter1d(loc_prep, size=self.smoothing)
+        self.prep[np.array(keep)] = loc_prep
 
         # usually, within the range of 25-30 repetitions,
         # the following tries result in an error
         while len(periods) < self.__num_periods__:
 
             try:
-                prephat = fftpack.rfft(self.prep)
+                prephat = fftpack.rfft(loc_prep)
                 idx = (prephat**2).argmax()
+
                 freqs = fftpack.rfftfreq(prephat.size,
-                                         d=np.abs(self.numdate[1] -
-                                                  self.numdate[0])/(2*np.pi))
+                                         d=np.min(np.abs(
+                                                 np.diff(loc_numdate)
+                                                 ))/(2*np.pi))
                 frequency = freqs[idx]
 
-                amplitude = self.prep.max()
+                amplitude = loc_prep.max()
                 guess = [amplitude, frequency, 0.]
 
+                keep = [not math.isnan(pp) for pp in self.prep]
+                loc_prep = np.array(list(compress(self.prep, keep)))
+                loc_numdate = np.array(list(compress(self.numdate, keep)))
+
                 (amplitude, frequency, phase), pcov = optimize.curve_fit(
-                    mysine, self.numdate, self.prep, guess)
+                    mysine, loc_numdate, loc_prep, guess)
 
                 period = 2*np.pi/frequency
 
@@ -238,15 +246,14 @@ class TempStab(object):
                 self.prep -= this_sine
 
                 periods.append(period)
-                # reoccurences much longer than the time series don't make sense
+                # reoccurences much longer than the time series
+                # don't make sense
                 keep = np.abs(periods) < len(self.prep)
                 periods = list(compress(periods, keep))
 
             except RuntimeError:
-                print(str(i) + " out of 100 frequencies calculated!")
+                # print(str(i) + " out of 100 frequencies calculated!")
                 break
-
-        print(periods)
 
 #########
 #        # the histogram of the data (can be deleted)
@@ -268,7 +275,8 @@ class TempStab(object):
 #            bw = 1.06 * min([np.std(periods),
 #                             iqr(periods)/1.34]) * (len(periods)**(-0.2))
 #        else:
-#            bw = 0.1  # default value; makes sense with only 1 period available
+#            bw = 0.1  # default value;
+#        # makes sense with only 1 period available
 #
 #        kde = KernelDensity(kernel='gaussian',
 #                            bandwidth=bw, rtol=1E-4).\
@@ -281,7 +289,7 @@ class TempStab(object):
 #                               len(self.prep)*2)
 #        kde_hist = np.exp(kde.score_samples(temp_res.reshape(-1, 1)))
 #
-##        plt.plot(temp_res, kde_hist)
+#        plt.plot(temp_res, kde_hist)
 #
 #        # calculate peaks of smooth histogram
 #        peaks = signal.argrelextrema(kde_hist, np.greater)[0]
@@ -344,7 +352,8 @@ class TempStab(object):
 #        print(temp_res[peaks])
 #        print(temp_res[peaks][kde_hist[peaks].argmax()])
 #########
-
+        self.__trend_removed__ = None
+        self.prep = self.array.copy()
         self.periods = periods
         print('Calculating periods finished.')
 
@@ -371,21 +380,19 @@ class TempStab(object):
             if this option is used, then the overall linear trend
             is removed first and then the seasonality is removed thereafter
         """
-        detrend = kwargs.get('detrend', False)
-        deseason = kwargs.get('deseason', False)
 
         self.prep = self.__orig__.copy()
 
         # in case that season shall be removed do detrending first
-        if deseason:
-            detrend = True
+        if self.__deseason_bool__:
+            self.__detrend_bool__ = True
 
         #  remove linear trend res = x - (slope*t + offset)
-        if detrend:
+        if self.__detrend_bool__:
             self.__detrend__()
 
         # remove seasonality
-        if deseason:
+        if self.__deseason_bool__:
             self.__deseason__()
 
     def __deseason__(self):
@@ -398,12 +405,13 @@ class TempStab(object):
 #        self.__season_removed__ = sins.eval_func(self.numdate)
 #        self.prep -= self.__season_removed__
         self.__season_removed__ = self.prep*0.
+        self.__season_removed__[:] = 0.
 
         # presmoothing needed for better access on periods
         loc_prep = uniform_filter1d(loc_prep, size=self.smoothing)
 
         # setting best guess and bounds for seasons
-        amplitudes = list(np.repeat((self.prep.max()-self.prep.min())/2,
+        amplitudes = list(np.repeat((loc_prep.max()-loc_prep.min())/2,
                                     len(self.periods)))
         freqs = [2*np.pi/p for p in self.periods]
         guess = amplitudes + freqs + list(np.repeat(1., len(self.periods)))
@@ -423,10 +431,8 @@ class TempStab(object):
                                           bounds=(lbound, ubound))
 
         # updating periods
-        print(self.periods)
         self.periods = [2*np.pi/p for p in
                         list(params[len(self.periods):2*len(self.periods)])]
-        print(self.periods)
 
         self.__season_removed__ += wrapper_multisine(self.numdate,
                                                      *params)
@@ -449,7 +455,10 @@ class TempStab(object):
         print('Detrending finished.')
 
     def analysis(self, homogenize=None, **kwargs):
-
+        """
+        analyse for breakpoints
+        """
+        
         self.__prep_orig__ = self.prep.copy()
         self.__numdate_orig__ = self.numdate.copy()
 
@@ -459,51 +468,152 @@ class TempStab(object):
         # fill data gaps if existing
         self.__identify_gaps__()
         self.__fill_gaps__()
-#
-#        # identify breakpoints in time based;
-#        # returns an array of indices with breakpoints
-#        self.breakpoints = self._calc_breakpoints(self.array, **kwargs)
-#
-#        print self.breakpoints
-#        print self.breakpoints, type(self.breakpoints), len(self.breakpoints)
-#        if len(self.breakpoints) > 0:
-#            # estimate linear trend parameters for
-#            # each section between breakpoints
-#            self.trend = self._get_trend_parameters(self.breakpoints, self.x)
-#
-#            # in case that breakpoints occur, perform a normalizaion of the
-#            # timeseries which corresponds to a removal of the segmentwise
-#            # linear offsets of the linear trends, the slope is not corrected
-#            # for
-#            if homogenize:
-#                yn = self._homogenization()
-#                # fig = plt.figure()
-#                # ax = fig.add_subplot(111)
-#                # ax.plot(self.x)
-#                # ax.plot(yn)
-#                # plt.show()
-#                # assert False
-#            else:
-#                yn = self.array
-#        else:
-#            self.trend = None
-#            yn = self.array
-#
-#        # perform final trend estimation
-#        L = LinearTrend(self.dates, yn)  # TODO uncertatinties???
-#        L.fit()  # should store also significance information if possible
+
+        # identify breakpoints in time based;
+        # returns an array of indices with breakpoints
+        self.breakpoints = np.sort(self.__calc_breakpoints__(self.array,
+                                                             **kwargs))
+
+        if len(self.breakpoints) > 0:
+            # estimate linear trend parameters for
+            # each section between breakpoints
+            self.trend = self.__get_trend_parameters__(self.breakpoints,
+                                                       self.array)
+
+            # in case that breakpoints occur, perform a normalizaion of the
+            # timeseries which corresponds to a removal of the segmentwise
+            # linear offsets of the linear trends, the slope is not corrected
+            # for
+            if homogenize:
+                self.homogenized = self.__homogenization__()
+#                fig = plt.figure()
+#                ax = fig.add_subplot(111)
+#                ax.plot(self.prep, label = "prep")
+#                ax.plot(yn, label = "yn")
+#                plt.legend()
+#                plt.show()
+#                assert False
+            else:
+                self.homogenized = None
+        else:
+            self.trend = None
+            self.homogenized = self.array
+
+        # perform final trend estimation
+        L = LinearTrend(self.numdate, self.homogenized)  # TODO uncertatinties???
+        L.fit()  # should store also significance information if possible
 
         res = {}
-        res.update({"array": self.array})
-#        res.update({'trend': {'slope': L.param[0], 'offset': L.param[1]}})
-#        res.update({'yn': yn*1.})
-#        res.update({'yorg': self.x*1.})
-#        res.update({'yraw': self._raw*1.})
-#        res.update({'season': self._season_removed*1.})
-#        res.update({'breakpoints': self.breakpoints})
-#        res.update({'nbreak': len(self.breakpoints)})
-
+        res.update({'trend' : {'slope' : L.param[0], 'offset' : L.param[1]}})
+        res.update({'yn' : self.homogenized})
+        res.update({'yorg' : self.array})
+        res.update({'yraw' : self.__orig__})
+        res.update({'season' : self.__season_removed__})
+        res.update({'breakpoints' : self.breakpoints})
+        res.update({'nbreak' : len(self.breakpoints)})
         return res
+    
+    def __get_indices__(self, bp, i, n):
+        """
+        returns indices of boundaries so these can be
+        directly used for indexing
+        """
+        i1 = bp[i]
+        if i < len(bp)-1:
+            i2 = bp[i+1]
+        else:
+            i2 = n
+        return min([i1, i2]), max([i1, i2])
+
+    def __get_trend_parameters__(self, bp, x, remove_seasonality=False):
+        """
+        calculate linear trend parameters for each segment between breakpoints
+
+        todo: significance of trends xxx, consideration of uncertainties of
+        samples
+        how to deal wih seasonality here ??? would need to be removed ???
+
+        Parameters
+        ----------
+        bp : ndarray, list
+            list with indices of breakpoints
+        x : ndarray
+            data array; this is explicitely provided as argument as it might be
+            constructed from e.g. detrended or deseasonalized timeseries
+        """
+        trends = []
+
+        if len(bp) == 0:
+            return trends
+        xx = self.numdate[0:bp[0]]
+        yy = x[0:bp[0]]
+        if remove_seasonality:
+            assert False
+
+        # estimate piecewise linear trend
+        L = LinearTrend(xx, yy) ### todo uncertatinis???
+        L.fit()
+        L.__i1__ = 0
+        L.__i2__ = bp[0]
+        trends.append(L)
+        n = len(x)
+        for i in xrange(len(bp)):
+            i1, i2 = self.__get_indices__(bp, i, n)
+            L = LinearTrend(self.numdate[i1:i2], x[i1:i2])
+            L.__i1__= i1
+            L.__i2__ = i2
+            L.fit()
+            trends.append(L)
+        return trends
+    
+    def __homogenization__(self):
+        """
+        perform a homogenization of the timeseries
+        by removing the detected breakpoint impacts
+        """
+        # should use self.trend which has been estimated already before
+        return self.__remove_trend_offset__(self.numdate, self.trend)
+    
+    def __remove_trend_offset__(self, x, trends):
+        """
+        remove offset of linear trends
+        slope is not corrected for
+        this routine is used to remove jumps
+        caused by structural breakpoints in the timeseries
+        """
+        r = np.zeros_like(self.array) * np.nan
+
+        O = 0.
+
+        for i in xrange(len(trends)-1):
+            T1=trends[i]  
+            T2=trends[i+1]
+            hlp = np.append(r[:T1.__i1__], self.array[T1.__i1__:T1.__i2__])
+            F = T2.eval_func(x[T2.__i1__:T2.__i2__])
+            L = T1.eval_func(x[T1.__i1__:T1.__i2__])
+            O = (L[-1]-F[0])
+#            plt.plot(x[T1.__i1__:T2.__i2__],np.append(L,F))
+#            plt.plot(x[T1.__i1__:T2.__i2__],np.append(L-O,F))
+#            plt.show()
+            hlp -= O
+            r[:T1.__i2__] = hlp*1.
+#            plt.plot(self.array + r*0, label = "orig")
+#            plt.plot(r, label = "corr")
+#            plt.legend()
+#            plt.show()
+        r[T2.__i1__:T2.__i2__] = self.array[T2.__i1__:T2.__i2__]
+#        plt.plot(self.array + r*0, label = "orig")
+#        plt.plot(r, label = "corr")
+#        plt.legend()
+#        plt.show()
+        # correct for same mode (?)
+#        print("mode")
+#        print(mode(r).mode[0],mode(self.array).mode[0],mode(r).mode[0]-mode(self.array).mode[0])
+#        print("mean")
+#        print(np.mean(r),np.mean(self.array),np.mean(r)-np.mean(self.array))
+#        print("median")
+#        print(np.median(r),np.median(r),np.median(r)-np.median(r))
+        return r
 
     def __fill_gaps__(self):
         """
@@ -537,38 +647,39 @@ class TempStab(object):
         self.filler = self.filler * 0. + np.mean(self.prep[np.logical_not(
             self.__identified_gaps__)])
 
-    def __gap_season__(self, t, x):
+    def __gap_season__(self, time, array):
         """
         produces linear filler with season (no noise)
         """
-        season = self.season_mod(t=t,
-                                 x=x,
+        season = self.season_mod(t=time,
+                                 x=array,
                                  f=self.frequency)
         season.fit()
         self.filler = season.eval_func(self.numdate)
 
-    def __gap_trend__(self, t, x):
+    def __gap_trend__(self, time, array):
         """
         produces linear filler with trend (no noise)
         """
         # calculate gaps environments (starts and stops)
         enlarged_gaps = signal.convolve(self.__identified_gaps__,
                                         np.array([1, 1, 1]))[1:-1] != 0
-        startsNstops = np.logical_xor(enlarged_gaps, self.__identified_gaps__)
-        sNs_pos = self.numdate[startsNstops]
+        starts_n_stops = np.logical_xor(enlarged_gaps,
+                                        self.__identified_gaps__)
+        sns_pos = self.numdate[starts_n_stops]
 
         # full linear model
         # (get that from detrend? externalize a single function?)
-        lint = LinearTrend(t, x)
+        lint = LinearTrend(time, array)
         lint.fit()
 
-        for i in range(len(sNs_pos)/2):
-            if sNs_pos[(i*2)] <= sNs_pos[(i*2+1)]:
-                this_gap = np.logical_and(self.numdate > sNs_pos[(i*2)],
-                                          self.numdate < sNs_pos[(i*2+1)])
+        for i in range(len(sns_pos)/2):
+            if sns_pos[(i*2)] <= sns_pos[(i*2+1)]:
+                this_gap = np.logical_and(self.numdate > sns_pos[(i*2)],
+                                          self.numdate < sns_pos[(i*2+1)])
             else:
-                this_gap = np.logical_and(self.numdate > sNs_pos[(i*2+1)],
-                                          self.numdate < sNs_pos[(i*2)])
+                this_gap = np.logical_and(self.numdate > sns_pos[(i*2+1)],
+                                          self.numdate < sns_pos[(i*2)])
             self.filler[this_gap] = \
                 lint.eval_func(self.numdate[this_gap])
 
@@ -608,8 +719,7 @@ class TempStab(object):
         fill any gap with nan
         """
         new_array = self.prep * np.NAN
-        keep = (self.numdate - self.__numdate_orig__) < self.num_tol
-        # TODO use np.isclose
+        keep = np.isclose(self.numdate, self.__numdate_orig__)
         new_array[keep] = self.prep[keep]
         self.prep = new_array
 
@@ -618,4 +728,190 @@ class TempStab(object):
         get a boolean array as indices for nan values
         """
         gaps = np.isnan(self.prep)
+        if not sum(gaps) == 0:
+            print("gaps identified: " + str(sum(gaps)))
         return gaps
+
+    def __calc_breakpoints__(self, x, **kwargs):
+        """
+        calculating breakpoints based on set function self.Break
+        """
+        return self.__chosen_break__(x,
+                                     start=self.dates[0],
+                                     frequency=self.periods,
+                                     **kwargs)
+
+    def __set_break_model__(self):
+        """
+        set break_method
+        """
+
+        if self.break_method is None:
+            print("No breakpoint method assigned. Just gaps are filled.")
+            self.__chosen_break__ = self.__break_none__
+        elif self.break_method == 'olssum':
+            self.__chosen_break__ = self.__break_olssum__
+        elif self.break_method == 'bfast':
+            self.__chosen_break__ = self.__break_bfast__
+        elif self.break_method == 'dummy':
+            self.__chosen_break__ = self.__break_dummy__
+        elif self.break_method == 'wang':
+            self.__chosen_break__ = self.__break_wang__
+        else:
+            assert False, 'ERROR: Unknown breakpoint method'
+
+    def __break_none__(self, x, **kwargs):
+        """
+        no breakpoint analysis
+        Returns
+        res : ndarray
+            array with breakpoint indices
+        """
+        return np.array([])
+
+    def __break_wang__(self, x, **kwargs):
+        assert False, \
+            "Breakpoint method " + self.break_method + " not implemented yet!"
+
+    def __break_dummy__(self, x, **kwargs):
+        assert False, \
+            "Breakpoint method " + self.break_method + " not implemented yet!"
+
+    def __break_bfast__(self, x, **kwargs):
+        """
+        calculate breakpoints in time using the BFAST method
+        Parameters
+        ----------
+        x : ndarray
+            data array
+
+        arguments in kwargs
+        start : datetime
+            start of timeseries
+        frequency : int
+            frequency of number of samples per year
+            e.g. 23 for 16-daily data = 365./16.
+
+
+        TODO: reasonable additional parameters!!!
+
+        Returns
+        -------
+        res : ndarray
+            array with indices of breakpoint occurence
+        """
+        B = BFAST()
+        B.run(x, **kwargs)
+        # return detected breakpoints from last itteration
+        #print B.results[0]['output'][-1]['ciVt']  
+        # this contains the confidence of the breakpoint estimation
+        res = B.results[0]['output'][-1]['bpVt']
+        
+        try:  # capture that no breakpoints are detected
+            n = len(res)
+            del n
+        except:
+            if res == 0:
+                res = []
+            else:
+                assert False, 'CASE not covered yet'
+        return np.asarray(res).astype('int')
+
+    def __break_olssum__(self, x, **kwargs):
+        # threshold for change detected        
+        # 1% 
+        self.__thresh_change__ = 0.01
+        
+        # remove overall linear trend using OLS
+        T = sm.add_constant(self.numdate)
+        model = sm.OLS(x,T)
+        results = model.fit()
+        
+        # initial result
+        r=[]
+
+        # estimate potential breakpoints from residual timeseries
+        try:
+            r = self.__get_breakpoints_spline__(self.numdate, results.resid)
+        except:
+            try:
+                r = self.__get_breakpoints_spline__(np.flip(self.numdate,0),
+                                                    np.flip(results.resid,0))
+                r = [len(self.numdate)-ri for ri in r]
+            except:
+                print("There is something wrong with the datasets" +\
+                      "for calculating breaking points." +\
+                      " Flipping does not produce right order.")
+        return(r)
+        
+    def __get_breakpoints_spline__(self, x, y):
+        # estimate breakpoints using splines
+        #http://stackoverflow.com/questions/29382903/
+        #       how-to-apply-piecewise-linear-fit-in-python
+        yn = interpolate.splrep(x, y, k=1, s=0)
+        d1 = np.abs(interpolate.splev(x, yn, der=1))  
+        # absolute of first derivative
+        
+        # now find the results that are not similar to others
+        # first sort results
+        sidx = d1.argsort()
+        idx = np.arange(len(d1))[sidx]
+        
+        ds = d1[d1.argsort()]
+        
+        r = []
+        for i in xrange(len(ds)-1,-1,-1):
+            if ds[i] > 1.E-6:
+                # check if ratio between subsequent slope values changes 
+                # by more than self.__thresh_change__ --> does not work if 
+                # jumps with same magnitude occur!
+                if np.abs(1.-(ds[i]/ds[i-1])) > self.__thresh_change__:   
+                    r.append(idx[i]+1)
+                else:
+                    break
+                
+        return(r)
+        
+        
+    def reanalysis(self):
+        """
+        redo all calulations after gapfilling and homogenization
+        """
+        # reinitialize
+        self.array = None
+        
+        if self.homogenized is not None:
+            homogenize = True
+            self.array = self.homogenized.copy()
+        else:
+            if self.__season_removed__ is not None:
+                self.array = self.prep + \
+                    self.__trend_removed__ + self.__season_removed__
+            elif self.__trend_removed__ is not None:
+                self.array = self.prep + self.__trend_removed__
+            else:
+                self.array = self.prep.copy()
+                
+        self.prep = self.array.copy()
+        self.__orig__ = self.array.copy()
+        self.__prep_orig__ = self.array.copy()
+                
+        # resetting preprocessing
+        self.prep = self.array.copy()
+        self.frequency = 365.2425
+        self.periods = np.array([1])
+        self.__trend_removed__ = None
+        self.__season_removed__ = None
+        
+        # preprocessing
+        self.__set_periods__()
+        self.__preprocessing__()
+        
+        # resetting analysis
+        self.homogenized = None
+        
+        # analysis
+        self.analysis(homogenize=homogenize)
+            
+        
+        
