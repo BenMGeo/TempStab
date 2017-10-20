@@ -20,6 +20,7 @@ from TempStab import rdp
 from TempStab import rdp_bp, rdp_bp_iter
 from scipy import interpolate
 from scipy import signal
+
     
 #XXX=np.genfromtxt('/media/bmueller/Work/BEN_Auslesen_Punkt/rsds_POINTS-iBAV-05_observations_historical_NA_LMU-INTERPOL_REGNIE-v3-IDW-BILINEARcombine_3h_19810101-20141231.csv', delimiter=';', skip_header=10)
 
@@ -66,7 +67,7 @@ start = np.random.randint(100, 699)
 
 stop = start + np.random.randint(300, 580)
 
-print(start, stop)
+#print(start, stop)
 
 gap = np.arange(start, stop)
 
@@ -98,7 +99,7 @@ TS = TempStab(dates=the_dates, array=the_ts,
 RES = TS.analysis(homogenize=True)
 
 
-
+[os.remove(files) for files in os.listdir(os.getcwd()) if files.endswith(".png")]
 
 #BP = rdp_bp(TS.numdate, TS.prep)
 #
@@ -112,6 +113,7 @@ RES = TS.analysis(homogenize=True)
 i=0
 while len(TS.breakpoints)>0:
     plt.figure(figsize=(25,15))
+    plt.ylim(-55,15)
     plt.plot(TS.numdate, TS.array, label = "original")
     plt.plot(TS.numdate, TS.array - TS.__trend_removed__, label = "no trend")
     plt.plot(TS.numdate, TS.prep, label = "no trend, no season")
@@ -128,19 +130,20 @@ while len(TS.breakpoints)>0:
     plt.savefig('process_' + str(i) + '.png')
     i+=1
     oldbp=TS.breakpoints
-    print(oldbp)
+    print("REANALYSIS started!")
     TS.reanalysis()
     if (len(TS.breakpoints) == len(oldbp)) and all(TS.breakpoints == oldbp):
         break
 
 plt.figure(figsize=(25,15))
+plt.ylim(-55,15)
 plt.plot(TS.numdate, TS.array, label = "original")
 plt.plot(TS.numdate, TS.array - TS.__trend_removed__, label = "no trend")
 plt.plot(TS.numdate, TS.prep, label = "no trend, no season")
 plt.plot(TS.numdate, TS.__season_removed__, label = "season")
 plt.plot(TS.numdate, TS.__trend_removed__, label = "trend")
 plt.plot(TS.numdate, TS.__season_removed__ + TS.__trend_removed__, label = "trend + season")
-#[plt.axvline(x=xi, color='k', linestyle='--') for xi in TS.numdate[TS.breakpoints].tolist()]
+[plt.axvline(x=xi, color='k', linestyle='--') for xi in TS.numdate[TS.breakpoints].tolist()]
 plt.plot(TS.numdate, RES["yn"], label = "BP_corrected")
 plt.legend(bbox_to_anchor=(0., 1.02, 1., .102), loc=3,
            ncol=2, mode="expand", borderaxespad=0.)
@@ -149,12 +152,13 @@ plt.legend(bbox_to_anchor=(0., 1.02, 1., .102), loc=3,
 #    plt.axvline(x=bp)
 plt.savefig('process_last.png')
 
-
-TS.reanalysis()
+#print("REANALYSIS started!")
+#TS.reanalysis()
 plt.figure(figsize=(25,15))
+plt.ylim(-55,15)
 plt.plot(TS.numdate, TS.homogenized, label = "final")
 plt.plot(TS.numdate, the_ts, label = "original")
-plt.plot(TS.numdate, TS.__season_removed__ + TS.__trend_removed__, label = "trend + season")
+plt.plot(TS.numdate, TS.__trend_removed__, label = "trend + season")
 plt.legend()
 plt.savefig('test.png')
 #

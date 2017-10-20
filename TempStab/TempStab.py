@@ -19,8 +19,7 @@ from scipy.ndimage.filters import uniform_filter1d
 import statsmodels.api as sm
 # from sklearn.neighbors import KernelDensity
 from models import LinearTrend, SineSeason3  # , SineSeasonk, SineSeason1
-import matplotlib.pyplot as plt
-#import matplotlib.mlab as mlab
+#import matplotlib.pyplot as plt
 from bfast import BFAST
 
 ####
@@ -91,7 +90,7 @@ class TempStab(object):
 
         self.dates = dates[:]
         self.array = array.copy()
-        self.prep = array.copy()
+        self.prep = self.array.copy()
         self.season = []
         self.season_mod = self.__do_nothing__
         self.numdate = np.linspace(1, 100, num=len(dates))
@@ -100,8 +99,8 @@ class TempStab(object):
         self.homogenized = None
         self.__season_removed__ = None
         self.__trend_removed__ = None
-        self.__orig__ = array.copy()
-        self.__prep_orig__ = array.copy()
+        self.__orig__ = self.array.copy()
+        self.__prep_orig__ = self.array.copy()
         self.__numdate_orig__ = self.numdate.copy()
         self.__identified_gaps__ = []
         self.__min_time_step__ = None
@@ -120,6 +119,8 @@ class TempStab(object):
         self.__num_periods__ = kwargs.get('num_periods', 3)
         # TODO smoothing filter size is a hard question
         self.smoothing = kwargs.get('smoothing4periods', 21)
+        self.__detrend_bool__ = kwargs.get('detrend', False)
+        self.__deseason_bool__ = kwargs.get('deseason', False)
 
         self.__run__ = kwargs.get('run', False)
 
@@ -127,11 +128,12 @@ class TempStab(object):
         self.__set_break_model__()
         self.__set_season_model__()
         self.__set_time__()
+        self.__set_periods__()
         self.__scale_time__()
         self.__check__()
 
         # Run routine
-        self.__preprocessing__(**kwargs)
+        self.__preprocessing__()
 
         if self.__run__:
             self.analysis(homogenize=self.__homogenize__, **kwargs)
@@ -193,7 +195,6 @@ class TempStab(object):
 
         self.numdate = np.array([toordinaltime(d) for d in self.dates])
 
-        self.__set_periods__()
 
     def __set_periods__(self):
         """
@@ -351,7 +352,8 @@ class TempStab(object):
 #        print(temp_res[peaks])
 #        print(temp_res[peaks][kde_hist[peaks].argmax()])
 #########
-
+        self.__trend_removed__ = None
+        self.prep = self.array.copy()
         self.periods = periods
         print('Calculating periods finished.')
 
@@ -378,21 +380,19 @@ class TempStab(object):
             if this option is used, then the overall linear trend
             is removed first and then the seasonality is removed thereafter
         """
-        detrend = kwargs.get('detrend', False)
-        deseason = kwargs.get('deseason', False)
 
         self.prep = self.__orig__.copy()
 
         # in case that season shall be removed do detrending first
-        if deseason:
-            detrend = True
+        if self.__deseason_bool__:
+            self.__detrend_bool__ = True
 
         #  remove linear trend res = x - (slope*t + offset)
-        if detrend:
+        if self.__detrend_bool__:
             self.__detrend__()
 
         # remove seasonality
-        if deseason:
+        if self.__deseason_bool__:
             self.__deseason__()
 
     def __deseason__(self):
@@ -505,10 +505,10 @@ class TempStab(object):
 
         res = {}
         res.update({'trend' : {'slope' : L.param[0], 'offset' : L.param[1]}})
-        res.update({'yn' : self.homogenized*1.})
-        res.update({'yorg' : self.array*1.})
-        res.update({'yraw' : self.__orig__*1.})
-        res.update({'season' : self.__season_removed__*1.})
+        res.update({'yn' : self.homogenized})
+        res.update({'yorg' : self.array})
+        res.update({'yraw' : self.__orig__})
+        res.update({'season' : self.__season_removed__})
         res.update({'breakpoints' : self.breakpoints})
         res.update({'nbreak' : len(self.breakpoints)})
         return res
@@ -607,12 +607,12 @@ class TempStab(object):
 #        plt.legend()
 #        plt.show()
         # correct for same mode (?)
-        print("mode")
-        print(mode(r).mode[0],mode(self.array).mode[0],mode(r).mode[0]-mode(self.array).mode[0])
-        print("mean")
-        print(np.mean(r),np.mean(self.array),np.mean(r)-np.mean(self.array))
-        print("median")
-        print(np.median(r),np.median(r),np.median(r)-np.median(r))
+#        print("mode")
+#        print(mode(r).mode[0],mode(self.array).mode[0],mode(r).mode[0]-mode(self.array).mode[0])
+#        print("mean")
+#        print(np.mean(r),np.mean(self.array),np.mean(r)-np.mean(self.array))
+#        print("median")
+#        print(np.median(r),np.median(r),np.median(r)-np.median(r))
         return r
 
     def __fill_gaps__(self):
@@ -728,6 +728,8 @@ class TempStab(object):
         get a boolean array as indices for nan values
         """
         gaps = np.isnan(self.prep)
+        if not sum(gaps) == 0:
+            print("gaps identified: " + str(sum(gaps)))
         return gaps
 
     def __calc_breakpoints__(self, x, **kwargs):
@@ -875,10 +877,12 @@ class TempStab(object):
         """
         redo all calulations after gapfilling and homogenization
         """
-        print(self.homogenized)
+        # reinitialize
+        self.array = None
         
         if self.homogenized is not None:
-            self.array = self.homogenized*1.
+            homogenize = True
+            self.array = self.homogenized.copy()
         else:
             if self.__season_removed__ is not None:
                 self.array = self.prep + \
@@ -886,10 +890,28 @@ class TempStab(object):
             elif self.__trend_removed__ is not None:
                 self.array = self.prep + self.__trend_removed__
             else:
-                self.array = self.prep
+                self.array = self.prep.copy()
                 
+        self.prep = self.array.copy()
+        self.__orig__ = self.array.copy()
+        self.__prep_orig__ = self.array.copy()
+                
+        # resetting preprocessing
+        self.prep = self.array.copy()
+        self.frequency = 365.2425
+        self.periods = np.array([1])
+        self.__trend_removed__ = None
+        self.__season_removed__ = None
+        
+        # preprocessing
+        self.__set_periods__()
         self.__preprocessing__()
-        self.analysis(homogenize=(self.homogenized is not None))
+        
+        # resetting analysis
+        self.homogenized = None
+        
+        # analysis
+        self.analysis(homogenize=homogenize)
             
         
         
