@@ -206,7 +206,6 @@ class TempStab(object):
 
         # normalization/standardization
         # probably unneccessary
-#        self.prep = (self.prep - self.prep.mean())/self.prep.std()
 
         keep = [not math.isnan(pp) for pp in self.prep]
         loc_prep = np.array(list(compress(self.prep, keep)))
@@ -216,8 +215,6 @@ class TempStab(object):
         loc_prep = uniform_filter1d(loc_prep, size=self.smoothing)
         self.prep[np.array(keep)] = loc_prep
 
-        # usually, within the range of 25-30 repetitions,
-        # the following tries result in an error
         while len(periods) < self.__num_periods__:
 
             try:
@@ -252,106 +249,9 @@ class TempStab(object):
                 periods = list(compress(periods, keep))
 
             except RuntimeError:
-                # print(str(i) + " out of 100 frequencies calculated!")
                 break
 
-#########
-#        # the histogram of the data (can be deleted)
-#        n, bins, patches = plt.hist(periods, 100, normed=1,
-#                                    facecolor='black', alpha=0.75)
-#
-#        plt.xlabel('Periods')
-#        plt.ylabel('Probability')
-#        plt.xlim([0, 500])
-#        plt.grid(True)
-#        plt.show()
-#########
 
-#        # kernel density for a smoother histogram
-#        # bandwidth: http://www.stat.washington.edu/courses/
-#        #                  stat527/s14/readings/Turlach.pdf
-#        # (4a)
-#        if len(periods) > 1:
-#            bw = 1.06 * min([np.std(periods),
-#                             iqr(periods)/1.34]) * (len(periods)**(-0.2))
-#        else:
-#            bw = 0.1  # default value;
-#        # makes sense with only 1 period available
-#
-#        kde = KernelDensity(kernel='gaussian',
-#                            bandwidth=bw, rtol=1E-4).\
-#            fit(np.array(periods).reshape(-1, 1))
-#
-#        # smooth linspace for possible periods
-#        # (just a bit more than those observed with a higher resolution)
-#        temp_res = np.linspace(0.5*min(periods),
-#                               1.5*max(periods),
-#                               len(self.prep)*2)
-#        kde_hist = np.exp(kde.score_samples(temp_res.reshape(-1, 1)))
-#
-#        plt.plot(temp_res, kde_hist)
-#
-#        # calculate peaks of smooth histogram
-#        peaks = signal.argrelextrema(kde_hist, np.greater)[0]
-#
-#        # calculate highest peaks
-#        # should actually come from kernels!
-#        periods = [temp_res[peaks][i]
-#                   for i in nargmax(np.array(kde_hist[peaks]),
-#                                    self.__num_periods__)]
-
-#########
-#        this is supposed to find max values, but is not
-#        print(temp_res[peaks])
-#        print(temp_res[peaks][kde_hist[peaks].argmax()])
-#
-#        # trying to calculate and reduce the biggest peaks
-#        # (not working properly)
-#
-#        # first guess for mu
-#        mu = temp_res[peaks][kde_hist[peaks].argmax()]
-#        # first guess for sigma
-#        std_guess = [1]
-#
-#        # peak_range for optimization of gauss
-#        # peak_range_width how large???
-#        peak_range_width = 41.
-#        peak_range = peaks[kde_hist[peaks].argmax()] +\
-#            np.arange(-np.floor(peak_range_width/2.),
-#                      +np.floor(peak_range_width/2.)+1)
-#        peak_range = peak_range.astype(int)
-#
-#        # weights for peak_range opt
-#        weights = mlab.normpdf(temp_res[peak_range],
-#                               temp_res[peaks[kde_hist[peaks].argmax()]],
-#                               0.1*peak_range_width)
-#        weights = weights/weights.sum()
-#        plt.plot(temp_res[peak_range], weights)
-#
-#        # optimization of a gaussian curve within the peak_range
-#        (std), pcov = optimize.curve_fit(mygauss,
-#                                         temp_res[peak_range],
-#                                         kde_hist[peak_range],
-#                                         std_guess,
-#                                         sigma=weights,
-#                                         absolute_sigma=True)
-#
-#        plt.plot(temp_res[peak_range], kde_hist[peak_range])
-#        print(mu, std[0])
-#        plt.plot(temp_res[peaks], kde_hist[peaks], '+')
-#        plt.plot(temp_res, mygauss(temp_res, std[0]))
-#
-#        # substract peak from kde
-#        kde_hist -= mygauss(temp_res, std[0])
-#        plt.plot(temp_res, kde_hist)
-#
-#        # calculate new extremes
-#        peaks = signal.argrelextrema(kde_hist, np.greater)[0]
-#        plt.plot(temp_res[peaks], kde_hist[peaks], 'o')
-#
-#        print(temp_res[peaks])
-#        print(temp_res[peaks][kde_hist[peaks].argmax()])
-#########
         self.__trend_removed__ = None
         self.prep = self.array.copy()
         self.periods = periods
