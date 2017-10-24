@@ -10,16 +10,16 @@ import math
 from itertools import compress
 import numpy as np
 from scipy import signal
+from scipy import interpolate
 from scipy.stats import mode
 # from scipy.stats import iqr
-import scipy.fftpack as fftpack
+#import scipy.fftpack as fftpack
 import scipy.optimize as optimize
-from scipy import interpolate
-from scipy.ndimage.filters import uniform_filter1d
+#from scipy.ndimage.filters import uniform_filter1d
 import statsmodels.api as sm
 # from sklearn.neighbors import KernelDensity
 from models import LinearTrend, SineSeason3  # , SineSeasonk, SineSeason1
-#import matplotlib.pyplot as plt
+import matplotlib.pyplot as plt
 from bfast import BFAST
 
 ####
@@ -116,9 +116,9 @@ class TempStab(object):
                                              [1., 0., 0., 0., 0., 0.])
         self.__homogenize__ = kwargs.get('homogenize', None)
         self.__timescale__ = kwargs.get('timescale', 'months')
-        self.__num_periods__ = kwargs.get('num_periods', 3)
+        self.__num_periods__ = kwargs.get('max_num_periods', 3)
         # TODO smoothing filter size is a hard question
-        self.smoothing = kwargs.get('smoothing4periods', 21)
+        # self.smoothing = kwargs.get('smoothing4periods', 3)
         self.__detrend_bool__ = kwargs.get('detrend', False)
         self.__deseason_bool__ = kwargs.get('deseason', False)
 
@@ -150,11 +150,11 @@ class TempStab(object):
         """
         self.frequency = frequency
 
-    def set_smoothing4periods(self, smoothing_window):
-        """
-        set smoothing window for simpler evaluation of periods (denoise)
-        """
-        self.smoothing = smoothing_window
+#    def set_smoothing4periods(self, smoothing_window):
+#        """
+#        set smoothing window for simpler evaluation of periods (denoise)
+#        """
+#        self.smoothing = smoothing_window
 
     def __check__(self):
         """
@@ -203,53 +203,69 @@ class TempStab(object):
         print('Calculating the periods of the data ...')
         self.__detrend__()
         periods = []
-
-        # normalization/standardization
-        # probably unneccessary
-
-        keep = [not math.isnan(pp) for pp in self.prep]
-        loc_prep = np.array(list(compress(self.prep, keep)))
-        loc_numdate = np.array(list(compress(self.numdate, keep)))
-
-        # presmoothing needed
-        loc_prep = uniform_filter1d(loc_prep, size=self.smoothing)
-        self.prep[np.array(keep)] = loc_prep
+        
+        # normalized values
+        yunbiased = self.prep-np.mean(self.prep)
+        ynorm = np.sum(yunbiased**2)
+        acor = np.correlate(yunbiased, yunbiased, "same")/ynorm
+        
+        x=np.arange(len(acor)/2)
+    
+        x=np.sort(np.concatenate((-x,np.array([0]),x)))
 
         while len(periods) < self.__num_periods__:
-
-            try:
-                prephat = fftpack.rfft(loc_prep)
-                idx = (prephat**2).argmax()
-
-                freqs = fftpack.rfftfreq(prephat.size,
-                                         d=np.min(np.abs(
-                                                 np.diff(loc_numdate)
-                                                 ))/(2*np.pi))
-                frequency = freqs[idx]
-
-                amplitude = loc_prep.max()
-                guess = [amplitude, frequency, 0.]
-
-                keep = [not math.isnan(pp) for pp in self.prep]
-                loc_prep = np.array(list(compress(self.prep, keep)))
-                loc_numdate = np.array(list(compress(self.numdate, keep)))
-
-                (amplitude, frequency, phase), pcov = optimize.curve_fit(
-                    mysine, loc_numdate, loc_prep, guess)
-
-                period = 2*np.pi/frequency
-
-                this_sine = mysine(self.numdate, amplitude, frequency, phase)
-                self.prep -= this_sine
-
-                periods.append(period)
-                # reoccurences much longer than the time series
-                # don't make sense
-                keep = np.abs(periods) < len(self.prep)
-                periods = list(compress(periods, keep))
-
-            except RuntimeError:
+            
+            maxs = signal.argrelmax(acor, order=3)[0]
+            
+            p=np.diff(x[maxs]).mean()
+                
+            if not math.isnan(p):
+                periods.append(p)
+            else:
                 break
+            
+            acor = acor[maxs]
+            
+            x = x[maxs]
+        
+        print(periods)
+        
+        
+#        while len(periods) < self.__num_periods__:
+#
+#            try:
+#                prephat = fftpack.rfft(loc_prep)
+#                idx = (prephat**2).argmax()
+#
+#                freqs = fftpack.rfftfreq(prephat.size,
+#                                         d=np.min(np.abs(
+#                                                 np.diff(loc_numdate)
+#                                                 ))/(2*np.pi))
+#                frequency = freqs[idx]
+#
+#                amplitude = loc_prep.max()
+#                guess = [amplitude, frequency, 0.]
+#
+#                keep = [not math.isnan(pp) for pp in self.prep]
+#                loc_prep = np.array(list(compress(self.prep, keep)))
+#                loc_numdate = np.array(list(compress(self.numdate, keep)))
+#
+#                (amplitude, frequency, phase), pcov = optimize.curve_fit(
+#                    mysine, loc_numdate, loc_prep, guess)
+#
+#                period = 2*np.pi/frequency
+#
+#                this_sine = mysine(self.numdate, amplitude, frequency, phase)
+#                self.prep -= this_sine
+#
+#                periods.append(period)
+#                # reoccurences much longer than the time series
+#                # don't make sense
+#                keep = np.abs(periods) < len(self.prep)
+#                periods = list(compress(periods, keep))
+#
+#            except RuntimeError:
+#                break
 
 
         self.__trend_removed__ = None
@@ -307,11 +323,11 @@ class TempStab(object):
         self.__season_removed__ = self.prep*0.
         self.__season_removed__[:] = 0.
 
-        # presmoothing needed for better access on periods
-        loc_prep = uniform_filter1d(loc_prep, size=self.smoothing)
+        # presmoothing needed for better access on periods?
+        # loc_prep = uniform_filter1d(loc_prep, size=self.smoothing)
 
         # setting best guess and bounds for seasons
-        amplitudes = list(np.repeat((loc_prep.max()-loc_prep.min())/2,
+        amplitudes = list(np.repeat((loc_prep.max()-loc_prep.min()),
                                     len(self.periods)))
         freqs = [2*np.pi/p for p in self.periods]
         guess = amplitudes + freqs + list(np.repeat(1., len(self.periods)))
@@ -378,7 +394,7 @@ class TempStab(object):
             # estimate linear trend parameters for
             # each section between breakpoints
             self.trend = self.__get_trend_parameters__(self.breakpoints,
-                                                       self.array)
+                                                       self.prep)
 
             # in case that breakpoints occur, perform a normalizaion of the
             # timeseries which corresponds to a removal of the segmentwise
@@ -472,7 +488,16 @@ class TempStab(object):
         by removing the detected breakpoint impacts
         """
         # should use self.trend which has been estimated already before
-        return self.__remove_trend_offset__(self.numdate, self.trend)
+#        res1 = self.__remove_resid_offset__(self.numdate, self.trend)
+        # based on bias of residuals
+        res2 = self.__remove_trend_offset__(self.numdate, self.trend)
+        # based on linear trends of residuals
+        
+#        plt.plot(res1,res2)
+#        plt.show()
+        
+        return res2
+        
     
     def __remove_trend_offset__(self, x, trends):
         """
@@ -506,6 +531,35 @@ class TempStab(object):
 #        plt.plot(r, label = "corr")
 #        plt.legend()
 #        plt.show()
+        # correct for same mode (?)
+#        print("mode")
+#        print(mode(r).mode[0],mode(self.array).mode[0],mode(r).mode[0]-mode(self.array).mode[0])
+#        print("mean")
+#        print(np.mean(r),np.mean(self.array),np.mean(r)-np.mean(self.array))
+#        print("median")
+#        print(np.median(r),np.median(r),np.median(r)-np.median(r))
+        return r
+    
+    def __remove_resid_offset__(self, x, trends):
+        """
+        remove offset of residual levels
+        slope is not corrected for
+        this routine is used to remove jumps
+        caused by structural breakpoints in the timeseries
+        """
+        r = self.array.copy()
+        
+        O = 0.
+
+        for i in xrange(len(trends)-1):
+            T1=trends[i]  
+            T2=trends[i+1]
+            E2 = self.prep[T2.__i1__:T2.__i2__].mean()
+            E1 = self.prep[T1.__i1__:T1.__i2__].mean()
+            O += E1-E2
+            r[T2.__i1__:T2.__i2__] = self.array[T2.__i1__:T2.__i2__]+O
+            if i == len(trends)-2:
+                r += self.array[-1] - r[-1]
         # correct for same mode (?)
 #        print("mode")
 #        print(mode(r).mode[0],mode(self.array).mode[0],mode(r).mode[0]-mode(self.array).mode[0])

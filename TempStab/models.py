@@ -3,7 +3,7 @@
 # take into account the uncertainties when doing the fitting
 
 
-from scipy.optimize import curve_fit, leastsq
+from scipy.optimize import curve_fit
 import numpy as np
 
 
