@@ -11,15 +11,15 @@ from itertools import compress
 import numpy as np
 from scipy import signal
 from scipy import interpolate
-from scipy.stats import mode
-# from scipy.stats import iqr
-#import scipy.fftpack as fftpack
+#from scipy.stats import mode
+#from scipy.stats import iqr
+import scipy.fftpack as fftpack
 import scipy.optimize as optimize
-#from scipy.ndimage.filters import uniform_filter1d
+from scipy.ndimage.filters import uniform_filter1d
 import statsmodels.api as sm
 # from sklearn.neighbors import KernelDensity
 from models import LinearTrend, SineSeason3  # , SineSeasonk, SineSeason1
-import matplotlib.pyplot as plt
+#import matplotlib.pyplot as plt
 from bfast import BFAST
 
 ####
@@ -117,8 +117,9 @@ class TempStab(object):
         self.__homogenize__ = kwargs.get('homogenize', None)
         self.__timescale__ = kwargs.get('timescale', 'months')
         self.__num_periods__ = kwargs.get('max_num_periods', 3)
+        self.__periods_method__ = kwargs.get('periods_method', "autocorr")
         # TODO smoothing filter size is a hard question
-        # self.smoothing = kwargs.get('smoothing4periods', 3)
+        self.smoothing = kwargs.get('smoothing4periods', 3)
         self.__detrend_bool__ = kwargs.get('detrend', False)
         self.__deseason_bool__ = kwargs.get('deseason', False)
 
@@ -200,8 +201,27 @@ class TempStab(object):
         """
         determine periodic frequencies of data sampling from data
         """
+        
         print('Calculating the periods of the data ...')
         self.__detrend__()
+        
+        if self.__periods_method__ == "autocorr":
+            self.__periods_autocorr__()
+        elif self.__periods_method__ == "fft_optim":
+            self.__periods_fft_optim__()
+        else:
+            assert False, "Method for determining periods undefined!"
+            
+        self.__trend_removed__ = None
+        self.prep = self.array.copy()
+        print('Calculating periods finished.')
+            
+        
+    def __periods_autocorr__(self):
+        """
+        periods from autocorrelation
+        """
+        
         periods = []
         
         # normalized values
@@ -230,48 +250,62 @@ class TempStab(object):
         
         print(periods)
         
-        
-#        while len(periods) < self.__num_periods__:
-#
-#            try:
-#                prephat = fftpack.rfft(loc_prep)
-#                idx = (prephat**2).argmax()
-#
-#                freqs = fftpack.rfftfreq(prephat.size,
-#                                         d=np.min(np.abs(
-#                                                 np.diff(loc_numdate)
-#                                                 ))/(2*np.pi))
-#                frequency = freqs[idx]
-#
-#                amplitude = loc_prep.max()
-#                guess = [amplitude, frequency, 0.]
-#
-#                keep = [not math.isnan(pp) for pp in self.prep]
-#                loc_prep = np.array(list(compress(self.prep, keep)))
-#                loc_numdate = np.array(list(compress(self.numdate, keep)))
-#
-#                (amplitude, frequency, phase), pcov = optimize.curve_fit(
-#                    mysine, loc_numdate, loc_prep, guess)
-#
-#                period = 2*np.pi/frequency
-#
-#                this_sine = mysine(self.numdate, amplitude, frequency, phase)
-#                self.prep -= this_sine
-#
-#                periods.append(period)
-#                # reoccurences much longer than the time series
-#                # don't make sense
-#                keep = np.abs(periods) < len(self.prep)
-#                periods = list(compress(periods, keep))
-#
-#            except RuntimeError:
-#                break
-
-
-        self.__trend_removed__ = None
-        self.prep = self.array.copy()
         self.periods = periods
-        print('Calculating periods finished.')
+        
+        
+    def __periods_fft_optim__(self):
+        """
+        periods from autocorrelation
+        """
+        
+        keep = [not math.isnan(pp) for pp in self.prep]
+        loc_prep = np.array(list(compress(self.prep, keep)))
+        loc_numdate = np.array(list(compress(self.numdate, keep)))
+
+        # presmoothing needed
+        loc_prep = uniform_filter1d(loc_prep, size=self.smoothing)
+        self.prep[np.array(keep)] = loc_prep
+        
+        periods = []
+        
+        while len(periods) < self.__num_periods__:
+
+            try:
+                prephat = fftpack.rfft(loc_prep)
+                idx = (prephat**2).argmax()
+
+                freqs = fftpack.rfftfreq(prephat.size,
+                                         d=np.min(np.abs(
+                                                 np.diff(loc_numdate)
+                                                 ))/(2*np.pi))
+                frequency = freqs[idx]
+
+                amplitude = loc_prep.max()
+                guess = [amplitude, frequency, 0.]
+
+                keep = [not math.isnan(pp) for pp in self.prep]
+                loc_prep = np.array(list(compress(self.prep, keep)))
+                loc_numdate = np.array(list(compress(self.numdate, keep)))
+
+                (amplitude, frequency, phase), pcov = optimize.curve_fit(
+                    mysine, loc_numdate, loc_prep, guess)
+
+                period = 2*np.pi/frequency
+
+                this_sine = mysine(self.numdate, amplitude, frequency, phase)
+                self.prep -= this_sine
+
+                periods.append(period)
+                # reoccurences much longer than the time series
+                # don't make sense
+                keep = np.abs(periods) < len(self.prep)
+                periods = list(compress(periods, keep))
+
+            except RuntimeError:
+                break
+
+        self.periods = periods
+        
 
     def __scale_time__(self):
         """
