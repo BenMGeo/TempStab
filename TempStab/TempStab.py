@@ -9,15 +9,14 @@ import datetime
 import math
 from itertools import compress
 import numpy as np
+#from scipy import fft
 from scipy import signal
 from scipy import interpolate
 #from scipy.stats import mode
-#from scipy.stats import iqr
 import scipy.fftpack as fftpack
 import scipy.optimize as optimize
 from scipy.ndimage.filters import uniform_filter1d
 import statsmodels.api as sm
-# from sklearn.neighbors import KernelDensity
 from models import LinearTrend, SineSeason3  # , SineSeasonk, SineSeason1
 #import matplotlib.pyplot as plt
 from bfast import BFAST
@@ -115,7 +114,7 @@ class TempStab(object):
         self.__default_season__ = kwargs.get('default_season',
                                              [1., 0., 0., 0., 0., 0.])
         self.__homogenize__ = kwargs.get('homogenize', None)
-        self.__timescale__ = kwargs.get('timescale', 'months')
+#        self.__timescale__ = kwargs.get('timescale', 'months')
         self.__num_periods__ = kwargs.get('max_num_periods', 3)
         self.__periods_method__ = kwargs.get('periods_method', "autocorr")
         # TODO smoothing filter size is a hard question
@@ -248,8 +247,6 @@ class TempStab(object):
             
             x = x[maxs]
         
-        print(periods)
-        
         self.periods = periods
         
         
@@ -267,7 +264,7 @@ class TempStab(object):
         self.prep[np.array(keep)] = loc_prep
         
         periods = []
-        
+      
         while len(periods) < self.__num_periods__:
 
             try:
@@ -296,6 +293,7 @@ class TempStab(object):
                 self.prep -= this_sine
 
                 periods.append(period)
+                
                 # reoccurences much longer than the time series
                 # don't make sense
                 keep = np.abs(periods) < len(self.prep)
@@ -303,7 +301,7 @@ class TempStab(object):
 
             except RuntimeError:
                 break
-
+        
         self.periods = periods
         
 
@@ -367,10 +365,10 @@ class TempStab(object):
         guess = amplitudes + freqs + list(np.repeat(1., len(self.periods)))
 
         ubound = list(np.repeat(np.inf, len(self.periods))) + \
-            [f*1.1 for f in freqs] + \
+            [f+10**(-16) for f in freqs] + \
             list(np.repeat(np.inf, len(self.periods)))
         lbound = list(np.repeat(-np.inf, len(self.periods))) + \
-            [f*0.9 for f in freqs] + \
+            [f for f in freqs] + \
             list(np.repeat(-np.inf, len(self.periods)))
 
         # fitting the curves to periods

@@ -23,7 +23,7 @@ from scipy import interpolate
 from scipy import signal
 
     
-XXX=np.genfromtxt('/media/bmueller/Work/BEN_Auslesen_Punkt/hurs_POINTS-iBAV-05_observations_historical_NA_LMU-INTERPOL_REGNIE-v3-IDW-BILINEARcombine_3h_19810101-20141231.csv', delimiter=';', skip_header=10)
+XXX=np.genfromtxt('/media/bmueller/Work/BEN_Auslesen_Punkt/tas_POINTS-iBAV-05_observations_historical_NA_LMU-INTERPOL_REGNIE-v3-IDW-BILINEARcombine_3h_19810101-20141231.csv', delimiter=';', skip_header=10)
 
 
 the_ts = XXX[:,4]
@@ -48,7 +48,8 @@ the_dates = list(reversed(the_dates))
 #plt.show()
 
 TS = TempStab(dates=the_dates, array=the_ts,
-              breakpoint_method="olssum", deseason=True, max_num_periods=20)
+              breakpoint_method="olssum",periods_method="autocorr",
+              deseason=True, max_num_periods=3)
 
 RES = TS.analysis(homogenize=True)
 
