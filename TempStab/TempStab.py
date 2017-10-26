@@ -368,15 +368,17 @@ class TempStab(object):
             [f+10**(-16) for f in freqs] + \
             list(np.repeat(np.inf, len(self.periods)))
         lbound = list(np.repeat(-np.inf, len(self.periods))) + \
-            [f for f in freqs] + \
+            [f-10**(-16)  for f in freqs] + \
             list(np.repeat(-np.inf, len(self.periods)))
-
+            
         # fitting the curves to periods
         params, pcov = optimize.curve_fit(wrapper_multisine,
                                           loc_numdate,
                                           loc_prep,
                                           guess,
                                           bounds=(lbound, ubound))
+
+        print(params)
 
         # updating periods
         self.periods = [2*np.pi/p for p in

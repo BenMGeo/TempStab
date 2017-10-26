@@ -28,19 +28,19 @@ XXX=np.genfromtxt('/media/bmueller/Work/BEN_Auslesen_Punkt/tas_POINTS-iBAV-05_ob
 
 the_ts = XXX[:,4]
 #
-#win=8
-#
-#the_ts = np.array([np.sum(the_ts[x:(x+win-1)]) for x in np.arange(len(the_ts)) if not(x%win)])
+win=8
+
+the_ts = np.array([np.sum(the_ts[x:(x+win-1)]) for x in np.arange(len(the_ts)) if not(x%win)])
 
 tdt = datetime.datetime.today()
 
-the_dates = [tdt - datetime.timedelta(hours=x*3) for
-             x in range(0, len(the_ts))]
-the_dates = list(reversed(the_dates))
-
-#the_dates = [tdt - datetime.timedelta(days=x) for
+#the_dates = [tdt - datetime.timedelta(hours=x*3) for
 #             x in range(0, len(the_ts))]
 #the_dates = list(reversed(the_dates))
+
+the_dates = [tdt - datetime.timedelta(days=x) for
+             x in range(0, len(the_ts))]
+the_dates = list(reversed(the_dates))
 
 #
 #plt.figure()
@@ -63,6 +63,8 @@ RES = TS.analysis(homogenize=True)
 #plt.figure()
 #plt.plot(abs(spline_red_array_d2) == min(abs(spline_red_array_d2)))
 #plt.show()
+
+print(TS.periods)
 
 #[XXX[i*8] for i in TS.breakpoints]
 i=0
